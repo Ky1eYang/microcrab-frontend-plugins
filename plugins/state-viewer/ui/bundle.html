@@ -1,10 +1,4 @@
-<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MicroCrab State Viewer</title>
-  <style>
+<style>
 :root {
   --bg-base: #0a0c10;
   --bg-card: rgba(22, 27, 34, 0.7);
@@ -319,70 +313,109 @@ body {
   font-size: 11px;
 }
 
-  </style>
-</head>
-<body>
-  <div class="header-bar">
-    <div class="search-wrap">
-      <svg class="search-icon" viewBox="0 0 16 16" fill="currentColor">
-        <path d="M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0zm-.82 4.74a6 6 0 1 0-1.06 1.06l3.66 3.66a.75.75 0 1 0 1.06-1.06l-3.66-3.66z"/>
+.search-empty-box {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-sub);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-empty-box p {
+  font-size: 12px;
+  color: var(--text-main);
+}
+
+
+</style>
+
+<div class="header-bar">
+  <div class="search-wrap">
+    <svg class="search-icon" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0zm-.82 4.74a6 6 0 1 0-1.06 1.06l3.66 3.66a.75.75 0 1 0 1.06-1.06l-3.66-3.66z"/>
+    </svg>
+    <input id="search" class="search-input" type="search" placeholder="搜索状态字段或值...">
+  </div>
+  <div class="actions">
+    <button id="btn-invisible" class="btn" title="切换显示模型不可见字段">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 2c-3.5 0-6.5 2.5-7.5 6 1 3.5 4 6 7.5 6s6.5-2.5 7.5-6c-1-3.5-4-6-7.5-6zm0 10c-2.2 0-4-1.8-4-4s1.8-4 4-4 4 1.8 4 4-1.8 4-4 4zm0-6.5c-1.4 0-2.5 1.1-2.5 2.5S6.6 10.5 8 10.5 10.5 9.4 10.5 8 9.4 5.5 8 5.5z"/>
       </svg>
-      <input id="search" class="search-input" type="search" placeholder="搜索状态字段或值...">
+    </button>
+    <button id="btn-refresh" class="btn" title="刷新状态">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M1.705 8.001a6.3 6.3 0 0 1 10.51-4.708l.707-.707A.75.75 0 0 1 14.25 3.12v3.38a.75.75 0 0 1-.75.75H10.12a.75.75 0 0 1-.53-1.28l.84-.84a4.8 4.8 0 1 0-.96 6.87.75.75 0 0 1 .94 1.17 6.3 6.3 0 0 1-8.715-5.169z"/>
+      </svg>
+    </button>
+    <button id="btn-new" class="btn btn-primary">+ 新建变量</button>
+  </div>
+</div>
+
+<div id="summary" class="meta-summary"></div>
+<div id="vars-list" class="vars-grid"></div>
+
+<!-- Edit Drawer / Modal -->
+<div id="edit-modal" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 id="modal-title" style="font-size:13px;font-weight:600;">编辑变量</h3>
     </div>
-    <div class="actions">
-      <button id="btn-invisible" class="btn" title="切换显示模型不可见字段">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M8 2c-3.5 0-6.5 2.5-7.5 6 1 3.5 4 6 7.5 6s6.5-2.5 7.5-6c-1-3.5-4-6-7.5-6zm0 10c-2.2 0-4-1.8-4-4s1.8-4 4-4 4 1.8 4 4-1.8 4-4 4zm0-6.5c-1.4 0-2.5 1.1-2.5 2.5S6.6 10.5 8 10.5 10.5 9.4 10.5 8 9.4 5.5 8 5.5z"/>
-        </svg>
-      </button>
-      <button id="btn-refresh" class="btn" title="刷新状态">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M1.705 8.001a6.3 6.3 0 0 1 10.51-4.708l.707-.707A.75.75 0 0 1 14.25 3.12v3.38a.75.75 0 0 1-.75.75H10.12a.75.75 0 0 1-.53-1.28l.84-.84a4.8 4.8 0 1 0-.96 6.87.75.75 0 0 1 .94 1.17 6.3 6.3 0 0 1-8.715-5.169z"/>
-        </svg>
-      </button>
-      <button id="btn-new" class="btn btn-primary">+ 新建变量</button>
+    <div class="modal-body">
+      <div class="editor-field">
+        <label for="modal-key">变量名称 (Key)</label>
+        <input id="modal-key" class="search-input" type="text" style="padding-left:10px;">
+      </div>
+      <div class="editor-field">
+        <label for="modal-val">值 (JSON 格式 / 字符串)</label>
+        <textarea id="modal-val" class="editor-textarea" spellcheck="false"></textarea>
+      </div>
+      <div id="modal-alert" class="alert-msg"></div>
+    </div>
+    <div class="modal-footer">
+      <button id="modal-cancel" class="btn">取消</button>
+      <button id="modal-save" class="btn btn-primary">保存变更</button>
     </div>
   </div>
+</div>
 
-  <div id="summary" class="meta-summary"></div>
-  <div id="vars-list" class="vars-grid"></div>
-
-  <!-- Edit Drawer / Modal -->
-  <div id="edit-modal" class="modal-overlay">
-    <div class="modal-box">
-      <div class="modal-header">
-        <h3 id="modal-title" style="font-size:13px;font-weight:600;">编辑变量</h3>
-      </div>
-      <div class="modal-body">
-        <div class="editor-field">
-          <label for="modal-key">变量名称 (Key)</label>
-          <input id="modal-key" class="search-input" type="text" style="padding-left:10px;">
-        </div>
-        <div class="editor-field">
-          <label for="modal-val">值 (JSON 格式 / 字符串)</label>
-          <textarea id="modal-val" class="editor-textarea" spellcheck="false"></textarea>
-        </div>
-        <div id="modal-alert" class="alert-msg"></div>
-      </div>
-      <div class="modal-footer">
-        <button id="modal-cancel" class="btn">取消</button>
-        <button id="modal-save" class="btn btn-primary">保存变更</button>
-      </div>
+<!-- Inline Delete Confirmation Modal (Replaces native window.confirm) -->
+<div id="delete-modal" class="modal-overlay">
+  <div class="modal-box" style="max-width:380px;">
+    <div class="modal-header">
+      <h3 style="font-size:13px;font-weight:600;color:var(--badge-red);">确认删除变量</h3>
+    </div>
+    <div class="modal-body">
+      <p id="delete-msg" style="color:var(--text-main);font-size:12px;">确定要从会话状态中删除该变量吗？</p>
+    </div>
+    <div class="modal-footer">
+      <button id="delete-cancel" class="btn">取消</button>
+      <button id="delete-confirm" class="btn" style="background:var(--badge-red);color:#fff;border-color:transparent;">确认删除</button>
     </div>
   </div>
+</div>
 
-  <script>
+<script>
 (function () {
-  let state = {
-    values: {},
-    metadata: {},
-    loading: false,
-    has_snapshot: false,
-    search: "",
-    show_invisible: false,
-    error: "",
-    locale: "zh-CN"
-  };
+  let state = (function() {
+    try {
+      const injected = /*INITIAL_STATE*/;
+      if (injected && typeof injected === "object") {
+        return injected;
+      }
+    } catch (_) {}
+    return {
+      values: {},
+      metadata: {},
+      loading: false,
+      has_snapshot: false,
+      search: "",
+      show_invisible: false,
+      error: "",
+      locale: "zh-CN"
+    };
+  })();
 
   const isZh = () => !String(state.locale || "").toLowerCase().startsWith("en");
 
@@ -390,7 +423,9 @@ body {
     searchPlaceholder: () => isZh() ? "搜索字段名或值..." : "Search key or value...",
     fieldsCount: (total, ro) => isZh() ? `共 ${total} 个字段 (${ro} 个只读)` : `${total} fields (${ro} read-only)`,
     loading: () => isZh() ? "正在读取会话状态..." : "Loading state...",
-    empty: () => isZh() ? "当前会话暂无状态数据" : "No state fields found",
+    empty: () => isZh() ? "当前会话暂无状态数据" : "No state data in current session",
+    noMatches: (q) => isZh() ? `未找到匹配 "${q}" 的变量` : `No variables match "${q}"`,
+    clearSearch: () => isZh() ? "清空筛选" : "Clear Filter",
     showInvisible: () => isZh() ? "显示隐藏字段" : "Show hidden fields",
     hideInvisible: () => isZh() ? "隐藏内部字段" : "Hide hidden fields",
     refresh: () => isZh() ? "刷新" : "Refresh",
@@ -400,6 +435,7 @@ body {
     delete: () => isZh() ? "删除" : "Delete",
     save: () => isZh() ? "保存变更" : "Save Changes",
     cancel: () => isZh() ? "取消" : "Cancel",
+    confirmDeletePrompt: (key) => isZh() ? `确定要从会话状态中删除变量 "${key}" 吗？此操作无法撤销。` : `Are you sure you want to delete variable "${key}"? This cannot be undone.`,
     invalidJson: () => isZh() ? "无效的 JSON 格式" : "Invalid JSON syntax",
     cannotEditReadOnly: () => isZh() ? "此字段受只读保护，不可修改" : "This field is read-only protected"
   };
@@ -412,17 +448,24 @@ body {
     btnRefresh: document.getElementById("btn-refresh"),
     btnNew: document.getElementById("btn-new"),
     list: document.getElementById("vars-list"),
+    // Edit Modal
     modal: document.getElementById("edit-modal"),
     modalTitle: document.getElementById("modal-title"),
     modalKey: document.getElementById("modal-key"),
     modalVal: document.getElementById("modal-val"),
     modalAlert: document.getElementById("modal-alert"),
     btnModalSave: document.getElementById("modal-save"),
-    btnModalCancel: document.getElementById("modal-cancel")
+    btnModalCancel: document.getElementById("modal-cancel"),
+    // Delete Modal
+    deleteModal: document.getElementById("delete-modal"),
+    deleteMsg: document.getElementById("delete-msg"),
+    btnDeleteConfirm: document.getElementById("delete-confirm"),
+    btnDeleteCancel: document.getElementById("delete-cancel")
   };
 
   let activeEditKey = null;
   let isCreatingNew = false;
+  let pendingDeleteKey = null;
 
   function isReadOnly(key) {
     const meta = state.metadata ? state.metadata[key] : null;
@@ -439,35 +482,62 @@ body {
     el.btnInvisible.classList.toggle("active", Boolean(state.show_invisible));
     el.btnInvisible.title = state.show_invisible ? i18n.hideInvisible() : i18n.showInvisible();
 
-    if (state.loading && !state.has_snapshot) {
+    const allKeys = Object.keys(state.values || {}).sort();
+
+    // 1. If currently loading and no snapshot exists yet
+    if (state.loading && !state.has_snapshot && allKeys.length === 0) {
       el.list.innerHTML = `<div style="text-align:center;padding:24px;color:var(--text-sub);">${i18n.loading()}</div>`;
       el.summary.textContent = "";
       return;
     }
 
-    const keys = Object.keys(state.values || {}).sort();
-    const query = (el.search.value || "").trim().toLowerCase();
-
+    // 2. Count visible vs invisible eligible keys
     let eligible = 0;
     let readOnlyCount = 0;
+    const query = (el.search.value || "").trim().toLowerCase();
 
-    const matchedKeys = keys.filter(k => {
+    for (const k of allKeys) {
+      const meta = state.metadata ? state.metadata[k] : null;
+      const isInvisible = meta && meta.visibility === "invisible";
+      if (isInvisible && !state.show_invisible) continue;
+      eligible++;
+      if (isReadOnly(k)) readOnlyCount++;
+    }
+
+    el.summary.textContent = i18n.fieldsCount(eligible, readOnlyCount);
+
+    // 3. If there are truly zero fields in the session
+    if (eligible === 0) {
+      el.list.innerHTML = `<div style="text-align:center;padding:32px;color:var(--text-sub);">${i18n.empty()}</div>`;
+      return;
+    }
+
+    // 4. Filter by search query
+    const matchedKeys = allKeys.filter(k => {
       const meta = state.metadata ? state.metadata[k] : null;
       const isInvisible = meta && meta.visibility === "invisible";
       if (isInvisible && !state.show_invisible) return false;
-
-      eligible++;
-      if (isReadOnly(k)) readOnlyCount++;
 
       if (!query) return true;
       const valStr = JSON.stringify(state.values[k] || "").toLowerCase();
       return k.toLowerCase().includes(query) || valStr.includes(query);
     });
 
-    el.summary.textContent = i18n.fieldsCount(eligible, readOnlyCount);
-
+    // 5. If search query yielded no matches (Differentiate from empty session!)
     if (matchedKeys.length === 0) {
-      el.list.innerHTML = `<div style="text-align:center;padding:32px;color:var(--text-sub);">${i18n.empty()}</div>`;
+      el.list.innerHTML = `
+        <div class="search-empty-box">
+          <p>${i18n.noMatches(escapeHtml(query))}</p>
+          <button id="btn-clear-search" class="btn btn-sm">${i18n.clearSearch()}</button>
+        </div>
+      `;
+      const btnClear = document.getElementById("btn-clear-search");
+      if (btnClear) {
+        btnClear.addEventListener("click", () => {
+          el.search.value = "";
+          render();
+        });
+      }
       return;
     }
 
@@ -516,7 +586,7 @@ body {
       btn.addEventListener("click", () => openEditModal(btn.dataset.key, false));
     });
     el.list.querySelectorAll(".op-del").forEach(btn => {
-      btn.addEventListener("click", () => deleteKey(btn.dataset.key));
+      btn.addEventListener("click", () => openDeleteModal(btn.dataset.key));
     });
   }
 
@@ -564,7 +634,6 @@ body {
     try {
       parsedVal = JSON.parse(el.modalVal.value);
     } catch {
-      // 允许普通字符串免写双引号
       parsedVal = el.modalVal.value;
     }
 
@@ -579,12 +648,23 @@ body {
     closeEditModal();
   }
 
-  function deleteKey(key) {
-    if (confirm(`确认删除变量 "${key}" 吗？`)) {
-      if (window.microcrab && window.microcrab.action) {
-        window.microcrab.action("delete-field", { key: key });
-      }
+  // Custom Inline Delete Modal to avoid sandbox window.confirm failure
+  function openDeleteModal(key) {
+    pendingDeleteKey = key;
+    el.deleteMsg.textContent = i18n.confirmDeletePrompt(key);
+    el.deleteModal.classList.add("open");
+  }
+
+  function closeDeleteModal() {
+    pendingDeleteKey = null;
+    el.deleteModal.classList.remove("open");
+  }
+
+  function confirmDelete() {
+    if (pendingDeleteKey && window.microcrab && window.microcrab.action) {
+      window.microcrab.action("delete-field", { key: pendingDeleteKey });
     }
+    closeDeleteModal();
   }
 
   function escapeHtml(str) {
@@ -612,6 +692,9 @@ body {
   el.btnModalCancel.addEventListener("click", closeEditModal);
   el.btnModalSave.addEventListener("click", saveModal);
 
+  el.btnDeleteCancel.addEventListener("click", closeDeleteModal);
+  el.btnDeleteConfirm.addEventListener("click", confirmDelete);
+
   // microcrab state listener
   if (window.microcrab && window.microcrab.onViewState) {
     window.microcrab.onViewState((next) => {
@@ -620,13 +703,11 @@ body {
         render();
       }
     });
-  } else {
-    // Dev mock
-    render();
   }
+
+  // Initial render
+  render();
 })();
 
-  </script>
-</body>
-</html>
+</script>
 

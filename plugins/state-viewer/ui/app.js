@@ -1,14 +1,22 @@
 (function () {
-  let state = {
-    values: {},
-    metadata: {},
-    loading: false,
-    has_snapshot: false,
-    search: "",
-    show_invisible: false,
-    error: "",
-    locale: "zh-CN"
-  };
+  let state = (function() {
+    try {
+      const injected = /*INITIAL_STATE*/;
+      if (injected && typeof injected === "object") {
+        return injected;
+      }
+    } catch (_) {}
+    return {
+      values: {},
+      metadata: {},
+      loading: false,
+      has_snapshot: false,
+      search: "",
+      show_invisible: false,
+      error: "",
+      locale: "zh-CN"
+    };
+  })();
 
   const isZh = () => !String(state.locale || "").toLowerCase().startsWith("en");
 
@@ -16,7 +24,9 @@
     searchPlaceholder: () => isZh() ? "搜索字段名或值..." : "Search key or value...",
     fieldsCount: (total, ro) => isZh() ? `共 ${total} 个字段 (${ro} 个只读)` : `${total} fields (${ro} read-only)`,
     loading: () => isZh() ? "正在读取会话状态..." : "Loading state...",
-    empty: () => isZh() ? "当前会话暂无状态数据" : "No state fields found",
+    empty: () => isZh() ? "当前会话暂无状态数据" : "No state data in current session",
+    noMatches: (q) => isZh() ? `未找到匹配 "${q}" 的变量` : `No variables match "${q}"`,
+    clearSearch: () => isZh() ? "清空筛选" : "Clear Filter",
     showInvisible: () => isZh() ? "显示隐藏字段" : "Show hidden fields",
     hideInvisible: () => isZh() ? "隐藏内部字段" : "Hide hidden fields",
     refresh: () => isZh() ? "刷新" : "Refresh",
@@ -26,6 +36,7 @@
     delete: () => isZh() ? "删除" : "Delete",
     save: () => isZh() ? "保存变更" : "Save Changes",
     cancel: () => isZh() ? "取消" : "Cancel",
+    confirmDeletePrompt: (key) => isZh() ? `确定要从会话状态中删除变量 "${key}" 吗？此操作无法撤销。` : `Are you sure you want to delete variable "${key}"? This cannot be undone.`,
     invalidJson: () => isZh() ? "无效的 JSON 格式" : "Invalid JSON syntax",
     cannotEditReadOnly: () => isZh() ? "此字段受只读保护，不可修改" : "This field is read-only protected"
   };
@@ -38,17 +49,24 @@
     btnRefresh: document.getElementById("btn-refresh"),
     btnNew: document.getElementById("btn-new"),
     list: document.getElementById("vars-list"),
+    // Edit Modal
     modal: document.getElementById("edit-modal"),
     modalTitle: document.getElementById("modal-title"),
     modalKey: document.getElementById("modal-key"),
     modalVal: document.getElementById("modal-val"),
     modalAlert: document.getElementById("modal-alert"),
     btnModalSave: document.getElementById("modal-save"),
-    btnModalCancel: document.getElementById("modal-cancel")
+    btnModalCancel: document.getElementById("modal-cancel"),
+    // Delete Modal
+    deleteModal: document.getElementById("delete-modal"),
+    deleteMsg: document.getElementById("delete-msg"),
+    btnDeleteConfirm: document.getElementById("delete-confirm"),
+    btnDeleteCancel: document.getElementById("delete-cancel")
   };
 
   let activeEditKey = null;
   let isCreatingNew = false;
+  let pendingDeleteKey = null;
 
   function isReadOnly(key) {
     const meta = state.metadata ? state.metadata[key] : null;
@@ -65,35 +83,62 @@
     el.btnInvisible.classList.toggle("active", Boolean(state.show_invisible));
     el.btnInvisible.title = state.show_invisible ? i18n.hideInvisible() : i18n.showInvisible();
 
-    if (state.loading && !state.has_snapshot) {
+    const allKeys = Object.keys(state.values || {}).sort();
+
+    // 1. If currently loading and no snapshot exists yet
+    if (state.loading && !state.has_snapshot && allKeys.length === 0) {
       el.list.innerHTML = `<div style="text-align:center;padding:24px;color:var(--text-sub);">${i18n.loading()}</div>`;
       el.summary.textContent = "";
       return;
     }
 
-    const keys = Object.keys(state.values || {}).sort();
-    const query = (el.search.value || "").trim().toLowerCase();
-
+    // 2. Count visible vs invisible eligible keys
     let eligible = 0;
     let readOnlyCount = 0;
+    const query = (el.search.value || "").trim().toLowerCase();
 
-    const matchedKeys = keys.filter(k => {
+    for (const k of allKeys) {
+      const meta = state.metadata ? state.metadata[k] : null;
+      const isInvisible = meta && meta.visibility === "invisible";
+      if (isInvisible && !state.show_invisible) continue;
+      eligible++;
+      if (isReadOnly(k)) readOnlyCount++;
+    }
+
+    el.summary.textContent = i18n.fieldsCount(eligible, readOnlyCount);
+
+    // 3. If there are truly zero fields in the session
+    if (eligible === 0) {
+      el.list.innerHTML = `<div style="text-align:center;padding:32px;color:var(--text-sub);">${i18n.empty()}</div>`;
+      return;
+    }
+
+    // 4. Filter by search query
+    const matchedKeys = allKeys.filter(k => {
       const meta = state.metadata ? state.metadata[k] : null;
       const isInvisible = meta && meta.visibility === "invisible";
       if (isInvisible && !state.show_invisible) return false;
-
-      eligible++;
-      if (isReadOnly(k)) readOnlyCount++;
 
       if (!query) return true;
       const valStr = JSON.stringify(state.values[k] || "").toLowerCase();
       return k.toLowerCase().includes(query) || valStr.includes(query);
     });
 
-    el.summary.textContent = i18n.fieldsCount(eligible, readOnlyCount);
-
+    // 5. If search query yielded no matches (Differentiate from empty session!)
     if (matchedKeys.length === 0) {
-      el.list.innerHTML = `<div style="text-align:center;padding:32px;color:var(--text-sub);">${i18n.empty()}</div>`;
+      el.list.innerHTML = `
+        <div class="search-empty-box">
+          <p>${i18n.noMatches(escapeHtml(query))}</p>
+          <button id="btn-clear-search" class="btn btn-sm">${i18n.clearSearch()}</button>
+        </div>
+      `;
+      const btnClear = document.getElementById("btn-clear-search");
+      if (btnClear) {
+        btnClear.addEventListener("click", () => {
+          el.search.value = "";
+          render();
+        });
+      }
       return;
     }
 
@@ -142,7 +187,7 @@
       btn.addEventListener("click", () => openEditModal(btn.dataset.key, false));
     });
     el.list.querySelectorAll(".op-del").forEach(btn => {
-      btn.addEventListener("click", () => deleteKey(btn.dataset.key));
+      btn.addEventListener("click", () => openDeleteModal(btn.dataset.key));
     });
   }
 
@@ -190,7 +235,6 @@
     try {
       parsedVal = JSON.parse(el.modalVal.value);
     } catch {
-      // 允许普通字符串免写双引号
       parsedVal = el.modalVal.value;
     }
 
@@ -205,12 +249,23 @@
     closeEditModal();
   }
 
-  function deleteKey(key) {
-    if (confirm(`确认删除变量 "${key}" 吗？`)) {
-      if (window.microcrab && window.microcrab.action) {
-        window.microcrab.action("delete-field", { key: key });
-      }
+  // Custom Inline Delete Modal to avoid sandbox window.confirm failure
+  function openDeleteModal(key) {
+    pendingDeleteKey = key;
+    el.deleteMsg.textContent = i18n.confirmDeletePrompt(key);
+    el.deleteModal.classList.add("open");
+  }
+
+  function closeDeleteModal() {
+    pendingDeleteKey = null;
+    el.deleteModal.classList.remove("open");
+  }
+
+  function confirmDelete() {
+    if (pendingDeleteKey && window.microcrab && window.microcrab.action) {
+      window.microcrab.action("delete-field", { key: pendingDeleteKey });
     }
+    closeDeleteModal();
   }
 
   function escapeHtml(str) {
@@ -238,6 +293,9 @@
   el.btnModalCancel.addEventListener("click", closeEditModal);
   el.btnModalSave.addEventListener("click", saveModal);
 
+  el.btnDeleteCancel.addEventListener("click", closeDeleteModal);
+  el.btnDeleteConfirm.addEventListener("click", confirmDelete);
+
   // microcrab state listener
   if (window.microcrab && window.microcrab.onViewState) {
     window.microcrab.onViewState((next) => {
@@ -246,8 +304,8 @@
         render();
       }
     });
-  } else {
-    // Dev mock
-    render();
   }
+
+  // Initial render
+  render();
 })();

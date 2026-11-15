@@ -58,6 +58,23 @@ export fn cabi_post_manifest(_: [*]const u8) void {}
 
 // 8-byte static buffer for string returns (ptr, len)
 var string_ret_buf: [8]u8 = undefined;
+var result_buf: [16 * 1024]u8 = undefined;
+
+fn formatPluginResult(vars_patch: []const u8, rerender: bool) []const u8 {
+    var stream = std.io.fixedBufferStream(&result_buf);
+    const writer = stream.writer();
+    writer.writeAll("{\"schema_version\":1,\"vars_patch\":") catch return "{\"schema_version\":1,\"vars_patch\":{}}";
+    if (vars_patch.len == 0) {
+        writer.writeAll("{}") catch return "{\"schema_version\":1,\"vars_patch\":{}}";
+    } else {
+        writer.writeAll(vars_patch) catch return "{\"schema_version\":1,\"vars_patch\":{}}";
+    }
+    if (rerender) {
+        writer.writeAll(",\"rerender\":true") catch return "{\"schema_version\":1,\"vars_patch\":{}}";
+    }
+    writer.writeByte('}') catch return "{\"schema_version\":1,\"vars_patch\":{}}";
+    return stream.getWritten();
+}
 
 fn setStringRet(str: []const u8) [*]const u8 {
     var stream = std.io.fixedBufferStream(&string_ret_buf);
@@ -70,8 +87,7 @@ fn setStringRet(str: []const u8) [*]const u8 {
 export fn init(ctx_ptr: [*]const u8, ctx_len: usize) [*]const u8 {
     const ctx = ctx_ptr[0..ctx_len];
     StateManager.initFromContext(ctx) catch {};
-    const init_json = "{\"loading\":true}";
-    return setStringRet(init_json);
+    return setStringRet(formatPluginResult("{\"loading\":true}", false));
 }
 
 export fn cabi_post_init(_: [*]const u8) void {}
@@ -93,7 +109,14 @@ export fn @"render-view"(
     _ = ctx_len;
 
     const view_state_json = StateManager.buildViewStateJson(allocator) catch "{}";
-    const envelope = shared.json.createEnvelope(allocator, embedded_html, view_state_json) catch "{}";
+
+    // Pre-populate state into the generated HTML to eliminate blank-state delay
+    const html_content = if (std.mem.indexOf(u8, embedded_html, "/*INITIAL_STATE*/")) |_|
+        std.mem.replaceOwned(u8, allocator, embedded_html, "/*INITIAL_STATE*/", view_state_json) catch embedded_html
+    else
+        embedded_html;
+
+    const envelope = shared.json.createEnvelope(allocator, html_content, view_state_json) catch "{}";
 
     var stream = std.io.fixedBufferStream(&view_output_buf);
     const writer = stream.writer();
@@ -109,7 +132,7 @@ export fn @"render-view"(
     writer.writeInt(u32, 0, .little) catch unreachable;
     writer.writeInt(u32, 0, .little) catch unreachable;
     writer.writeInt(u32, 0, .little) catch unreachable;
-    // 28: rerender = 0
+    // 28: rerender = 0 (Never reload iframe on routine data push)
     writer.writeInt(u32, 0, .little) catch unreachable;
     // 32: error (tag=0, ptr=0, len=0)
     writer.writeInt(u32, 0, .little) catch unreachable;
@@ -140,7 +163,8 @@ export fn @"on-action"(
     const payload = payload_ptr[0..payload_len];
 
     const patch = StateManager.handleAction(action, payload) catch "{}";
-    return setStringRet(patch);
+    // Never trigger rerender on UI actions: let MessageChannel push the view_state
+    return setStringRet(formatPluginResult(patch, false));
 }
 
 export fn @"cabi_post_on-action"(_: [*]const u8) void {}
@@ -164,7 +188,7 @@ export fn @"on-phase"(
     const payload = payload_ptr[0..payload_len];
 
     const patch = StateManager.handlePhase(phase, payload) catch "{}";
-    return setStringRet(patch);
+    return setStringRet(formatPluginResult(patch, false));
 }
 
 export fn @"cabi_post_on-phase"(_: [*]const u8) void {}
