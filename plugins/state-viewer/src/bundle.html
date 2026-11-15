@@ -122,9 +122,91 @@ body {
 }
 
 .btn.active {
-  background: rgba(59, 130, 246, 0.2);
+  background: rgba(59, 130, 246, 0.25);
   border-color: var(--accent);
-  color: var(--accent);
+  color: #58a6ff;
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.btn.spinning svg {
+  animation: spin 0.75s linear infinite;
+}
+
+.toast {
+  position: fixed;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  background: rgba(18, 22, 32, 0.95);
+  border: 1px solid var(--accent);
+  color: var(--text-main);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 11px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  opacity: 0;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 1000;
+  white-space: nowrap;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.var-owner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-sub);
+}
+
+.owner-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.owner-client {
+  background: #3fb950;
+  box-shadow: 0 0 6px rgba(63, 185, 80, 0.5);
+}
+
+.owner-agent {
+  background: #a371f7;
+  box-shadow: 0 0 6px rgba(163, 113, 247, 0.5);
+}
+
+.owner-system {
+  background: #8b949e;
+}
+
+.badge-custom {
+  background: rgba(59, 130, 246, 0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.badge-framework {
+  background: rgba(139, 148, 158, 0.15);
+  color: #8b949e;
+  border: 1px solid var(--border);
+}
+
+.badge-reference {
+  background: rgba(210, 153, 34, 0.15);
+  color: #e3b341;
+  border: 1px solid rgba(227, 179, 65, 0.3);
 }
 
 /* Stats */
@@ -382,6 +464,8 @@ body {
   </div>
 </div>
 
+<div id="toast" class="toast"></div>
+
 <div id="summary" class="meta-summary"></div>
 <div id="vars-list" class="vars-grid"></div>
 
@@ -427,24 +511,17 @@ body {
 
 <script>
 (function () {
-  let state = (function() {
-    try {
-      const injected = /*INITIAL_STATE*/;
-      if (injected && typeof injected === "object") {
-        return injected;
-      }
-    } catch (_) {}
-    return {
-      values: {},
-      metadata: {},
-      loading: false,
-      has_snapshot: false,
-      search: "",
-      show_invisible: false,
-      error: "",
-      locale: "zh-CN"
-    };
-  })();
+  let state = {
+    values: {},
+    metadata: {},
+    descriptors: {},
+    loading: true,
+    has_snapshot: false,
+    search: "",
+    show_invisible: false,
+    error: "",
+    locale: "zh-CN"
+  };
 
   const isZh = () => !String(state.locale || "").toLowerCase().startsWith("en");
 
@@ -460,8 +537,6 @@ body {
     refresh: () => isZh() ? "刷新" : "Refresh",
     newField: () => isZh() ? "+ 新建变量" : "+ New Variable",
     readOnly: () => isZh() ? "只读受保护" : "Read Only",
-    editTitle: (can) => can ? (isZh() ? "编辑此变量" : "Edit variable") : (isZh() ? "此变量受保护，无编辑权限 (缺少 client 授权)" : "Protected variable (missing client edit permission)"),
-    deleteTitle: (can) => can ? (isZh() ? "删除此变量" : "Delete variable") : (isZh() ? "此变量非客户端所有 (Owner 不是 client)，无法删除" : "Variable not owned by client (cannot delete)"),
     save: () => isZh() ? "保存变更" : "Save Changes",
     cancel: () => isZh() ? "取消" : "Cancel",
     confirmDeletePrompt: (key) => isZh() ? `确定要从会话状态中删除变量 "${key}" 吗？此操作无法撤销。` : `Are you sure you want to delete variable "${key}"? This cannot be undone.`,
@@ -482,6 +557,7 @@ body {
     btnRefresh: document.getElementById("btn-refresh"),
     btnNew: document.getElementById("btn-new"),
     list: document.getElementById("vars-list"),
+    toast: document.getElementById("toast"),
     // Edit Modal
     modal: document.getElementById("edit-modal"),
     modalTitle: document.getElementById("modal-title"),
@@ -497,26 +573,95 @@ body {
     btnDeleteCancel: document.getElementById("delete-cancel")
   };
 
+  let toastTimer = null;
+  function showToast(msg, duration = 1800) {
+    if (!el.toast) return;
+    if (toastTimer) clearTimeout(toastTimer);
+    el.toast.textContent = msg;
+    el.toast.classList.add("show");
+    toastTimer = setTimeout(() => {
+      el.toast.classList.remove("show");
+      toastTimer = null;
+    }, duration);
+  }
+
   let activeEditKey = null;
   let isCreatingNew = false;
   let pendingDeleteKey = null;
 
+  function getVarDescriptor(key) {
+    return (state.descriptors && state.descriptors[key]) || null;
+  }
+
+  function getVarMetadata(key) {
+    return (state.metadata && state.metadata[key]) || null;
+  }
+
+  function getVarKind(key) {
+    const desc = getVarDescriptor(key);
+    if (desc && desc.kind) return desc.kind;
+    const meta = getVarMetadata(key);
+    if (meta) return "custom";
+    return "framework";
+  }
+
+  function getVarOwner(key) {
+    const meta = getVarMetadata(key);
+    if (meta && meta.owner) {
+      if (meta.owner === "client") return { label: isZh() ? "客户端 (Client-owned)" : "Client-owned", cls: "owner-client" };
+      if (meta.owner === "agent") return { label: isZh() ? "智能体 (Agent-owned)" : "Agent-owned", cls: "owner-agent" };
+      if (meta.owner === "runtime") return { label: isZh() ? "会话运行时 (Runtime-owned)" : "Runtime-owned", cls: "owner-system" };
+      return { label: `${meta.owner}-owned`, cls: "owner-system" };
+    }
+    const desc = getVarDescriptor(key);
+    if (desc) {
+      if (desc.kind === "framework") return { label: isZh() ? "框架内置 (Framework-owned)" : "Framework-owned", cls: "owner-system" };
+      if (desc.kind === "reference") return { label: isZh() ? "只读引用 (Reference-owned)" : "Reference-owned", cls: "owner-system" };
+      if (desc.kind === "custom") return { label: isZh() ? "客户端 (Client-owned)" : "Client-owned", cls: "owner-client" };
+    }
+    return { label: isZh() ? "系统运行时 (Runtime-owned)" : "Runtime-owned", cls: "owner-system" };
+  }
+
   function canEdit(key) {
-    const meta = (state.metadata && state.metadata[key]) || null;
-    if (!meta) return true; // Ad-hoc client variables default to editable
-    if (Array.isArray(meta.editors)) {
+    const desc = getVarDescriptor(key);
+    if (desc) {
+      return Boolean(desc.kind === "custom" && desc.editable);
+    }
+    const meta = getVarMetadata(key);
+    if (meta && Array.isArray(meta.editors)) {
       return meta.editors.includes("client");
     }
-    return true;
+    return false;
   }
 
   function canDelete(key) {
-    const meta = (state.metadata && state.metadata[key]) || null;
-    if (!meta) return true; // Ad-hoc client variables default to deletable
-    if (meta.owner) {
+    const desc = getVarDescriptor(key);
+    if (desc) {
+      return Boolean(desc.kind === "custom" && desc.deletable);
+    }
+    const meta = getVarMetadata(key);
+    if (meta && meta.owner) {
       return meta.owner === "client";
     }
     return false;
+  }
+
+  function getEditDisabledReason(key) {
+    const desc = getVarDescriptor(key);
+    if (desc && desc.reason) return desc.reason;
+    if (!canEdit(key)) {
+      return isZh() ? "此变量非客户端所有或缺少 client 编辑权限" : "Variable is read-only or missing client edit rights";
+    }
+    return isZh() ? "编辑此变量" : "Edit variable";
+  }
+
+  function getDeleteDisabledReason(key) {
+    const desc = getVarDescriptor(key);
+    if (desc && desc.reason) return desc.reason;
+    if (!canDelete(key)) {
+      return isZh() ? "此变量非客户端所有 (Owner 不是 client)，无法删除" : "Variable not owned by client (cannot delete)";
+    }
+    return isZh() ? "删除此变量" : "Delete variable";
   }
 
   function render() {
@@ -587,18 +732,30 @@ body {
     let html = "";
     for (const key of matchedKeys) {
       const val = state.values[key];
-      const meta = state.metadata ? state.metadata[key] : {};
+      const meta = (state.metadata && state.metadata[key]) || {};
       const editable = canEdit(key);
       const deletable = canDelete(key);
+      const kind = getVarKind(key);
+      const ownerInfo = getVarOwner(key);
 
       const valFormatted = typeof val === "object" ? JSON.stringify(val, null, 2) : String(val);
       const type = Array.isArray(val) ? "array" : typeof val;
 
-      const isInvisible = meta.visibility === "invisible";
-      const isPersisted = meta.persistence === "persisted";
+      const isInvisible = Boolean(meta.visibility === "invisible");
+      const isPersisted = Boolean(meta.persistence === "persisted");
 
-      const editTitle = i18n.editTitle(editable);
-      const deleteTitle = i18n.deleteTitle(deletable);
+      const editTitle = getEditDisabledReason(key);
+      const deleteTitle = getDeleteDisabledReason(key);
+
+      let kindBadgeClass = "badge-framework";
+      let kindBadgeText = "Framework";
+      if (kind === "custom") {
+        kindBadgeClass = "badge-custom";
+        kindBadgeText = "Custom";
+      } else if (kind === "reference") {
+        kindBadgeClass = "badge-reference";
+        kindBadgeText = "Reference";
+      }
 
       html += `
         <div class="var-card" data-key="${escapeHtml(key)}">
@@ -608,6 +765,7 @@ body {
               <span style="font-size:10px;color:var(--text-sub);">(${type})</span>
             </div>
             <div class="card-badges">
+              <span class="badge ${kindBadgeClass}">${kindBadgeText}</span>
               ${isInvisible ? `<span class="badge badge-invisible">Invisible</span>` : `<span class="badge badge-visible">Visible</span>`}
               ${isPersisted ? `<span class="badge badge-persisted">Persisted</span>` : ""}
               ${!editable ? `<span class="badge badge-locked">🔒 ${i18n.readOnly()}</span>` : ""}
@@ -615,14 +773,15 @@ body {
           </div>
           <div class="val-preview">${escapeHtml(valFormatted)}</div>
           <div class="card-footer">
-            <div style="font-size:11px;color:var(--text-sub);">
-              ${!deletable ? (isZh() ? "受保护 (非 Client 所有)" : "Protected") : "Client-owned"}
+            <div class="var-owner">
+              <span class="owner-dot ${ownerInfo.cls}"></span>
+              <span>${escapeHtml(ownerInfo.label)}</span>
             </div>
             <div class="action-buttons">
               <button 
                 class="btn-icon op-edit" 
                 data-key="${escapeHtml(key)}" 
-                title="${editTitle}"
+                title="${escapeHtml(editTitle)}"
                 ${!editable ? "disabled" : ""}
               >
                 ${ICONS.edit}
@@ -630,7 +789,7 @@ body {
               <button 
                 class="btn-icon btn-icon-danger op-del" 
                 data-key="${escapeHtml(key)}" 
-                title="${deleteTitle}"
+                title="${escapeHtml(deleteTitle)}"
                 ${!deletable ? "disabled" : ""}
               >
                 ${ICONS.trash}
@@ -705,8 +864,10 @@ body {
       parsedVal = el.modalVal.value;
     }
 
+    const opId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : null;
     if (window.microcrab && window.microcrab.action) {
       window.microcrab.action("save-json", {
+        operation_id: opId,
         key: key,
         value: parsedVal,
         is_new: isCreatingNew
@@ -724,7 +885,16 @@ body {
         persistence: "persisted",
         editors: ["agent", "client", "runtime"]
       };
+      state.descriptors = state.descriptors || {};
+      state.descriptors[key] = {
+        kind: "custom",
+        editable: true,
+        owner_editable: true,
+        deletable: true,
+        reason: null
+      };
     }
+    showToast(isZh() ? `已保存变量 "${key}"` : `Saved variable "${key}"`);
     render();
 
     closeEditModal();
@@ -743,11 +913,18 @@ body {
   }
 
   function confirmDelete() {
+    const opId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : null;
     if (pendingDeleteKey && window.microcrab && window.microcrab.action) {
-      window.microcrab.action("delete-field", { key: pendingDeleteKey });
+      window.microcrab.action("delete-field", {
+        operation_id: opId,
+        key: pendingDeleteKey
+      });
       // Optimistic Local Update
       if (state.values) {
         delete state.values[pendingDeleteKey];
+        if (state.metadata) delete state.metadata[pendingDeleteKey];
+        if (state.descriptors) delete state.descriptors[pendingDeleteKey];
+        showToast(isZh() ? `已删除变量 "${pendingDeleteKey}"` : `Deleted variable "${pendingDeleteKey}"`);
         render();
       }
     }
@@ -765,16 +942,55 @@ body {
 
   // Events
   el.search.addEventListener("input", render);
+
+  // Toggle Invisible Fields Button
   el.btnInvisible.addEventListener("click", () => {
+    state.show_invisible = !state.show_invisible;
+    el.btnInvisible.classList.toggle("active", Boolean(state.show_invisible));
+
+    const allKeys = Object.keys(state.values || {});
+    const hiddenCount = allKeys.filter(k => {
+      const meta = state.metadata ? state.metadata[k] : null;
+      return meta && meta.visibility === "invisible";
+    }).length;
+
+    if (state.show_invisible) {
+      if (hiddenCount > 0) {
+        showToast(isZh() ? `已显示 ${hiddenCount} 个内部隐藏字段` : `Showing ${hiddenCount} hidden fields`);
+      } else {
+        showToast(isZh() ? "已开启显示内部字段 (当前会话无隐藏字段)" : "Showing hidden fields (none present)");
+      }
+    } else {
+      showToast(isZh() ? "已隐藏内部字段" : "Hidden fields concealed");
+    }
+
+    render();
+
     if (window.microcrab && window.microcrab.action) {
-      window.microcrab.action("toggle-invisible", {});
+      window.microcrab.action("toggle-invisible", { show_invisible: state.show_invisible });
     }
   });
+
+  // Refresh Button
+  let refreshTimer = null;
   el.btnRefresh.addEventListener("click", () => {
+    if (el.btnRefresh.disabled) return;
+    el.btnRefresh.classList.add("spinning");
+    el.btnRefresh.disabled = true;
+    showToast(isZh() ? "正在刷新会话状态..." : "Refreshing session state...", 1500);
+
     if (window.microcrab && window.microcrab.action) {
       window.microcrab.action("refresh", {});
     }
+
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      el.btnRefresh.classList.remove("spinning");
+      el.btnRefresh.disabled = false;
+      refreshTimer = null;
+    }, 2000);
   });
+
   el.btnNew.addEventListener("click", () => openEditModal("", true));
   el.btnModalCancel.addEventListener("click", closeEditModal);
   el.btnModalSave.addEventListener("click", saveModal);
@@ -786,7 +1002,17 @@ body {
   if (window.microcrab && window.microcrab.onViewState) {
     window.microcrab.onViewState((next) => {
       if (next && typeof next === "object") {
+        const wasSpinning = el.btnRefresh.classList.contains("spinning");
         state = { ...state, ...next };
+        if (wasSpinning) {
+          el.btnRefresh.classList.remove("spinning");
+          el.btnRefresh.disabled = false;
+          if (refreshTimer) {
+            clearTimeout(refreshTimer);
+            refreshTimer = null;
+          }
+          showToast(isZh() ? "状态已同步" : "State synchronized", 1500);
+        }
         render();
       }
     });

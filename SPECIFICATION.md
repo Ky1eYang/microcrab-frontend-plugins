@@ -1,11 +1,45 @@
 # MicroCrab Frontend Plugins (Zig Edition) 实现规范
 
+## Maintained v0.4.0 adaptation
+
+This section governs the maintained implementation; the original design text
+below remains as provenance where it describes visual proposals rather than
+verified behavior. The package and State Viewer manifest release are `0.4.0`.
+
+The exact official ABI source is the frontend-owned
+`crates/client/plugins/wit/client-plugin.wit`; the Zig workspace copy must be
+byte-identical. Only ABI0.4 imports are emitted. Sidebar and ExpandedPage retain
+the authored UI. SettingPage is localized information only: no plugin parameters;
+inspect state in the conversation sidebar or expanded view. No State import is
+issued for SettingPage, initialization or a missing selected Session. Undeclared
+targets intentionally return native JSON `null` before imports.
+
+Flat `ctx.session_id` and `ctx.locale` are consumed on every lifecycle call;
+owner/server/history/instance changes revoke stale snapshot/request state.
+Atomic inspection installs values, metadata, descriptors and witness together.
+Descriptor policy fails closed. A draft captures its opening witness; submission
+retains the exact UUID, expected witness and change. Queue acknowledgement means
+saving, never success. Completions correlate by request ID and operation ID.
+Only an applied receipt marks saved. Rejected errors retain drafts; queued or
+unknown operations disable duplicate submission and permit read-only observation
+of that exact operation. New keys keep visible/persisted scope and the existing
+Agent/Client/Runtime editor set; existing sets retain their attributes; deletions
+require Client ownership. No role or Session can be selected by action payloads.
+
+`ui/index.html`, `ui/style.css` and `ui/app.js` are the authored build inputs.
+`tools/bundle.zig` generates the embedded HTML in the build cache. Historical
+tracked bundles, including prior user edits, are preserved but unused by builds.
+`zig build component` builds, embeds and validates without staging browser assets.
+`zig build test` runs native State governance/parser and installer tests.
+Actual browser acceptance is a separate frontend integration gate.
+
+
 ## 1. 架构总览与设计目标
 
 本项目是 `MicroCrab` 客户端在浏览器端运行的 **Frontend Plugins** 的全新技术栈实现，采用 **Zig** 语言重构原 Rust 实现（`microcrab-frontend/crates/client/plugins/*`），运行于 WebAssembly Component Model 运行时之上。
 
 ### 核心设计目标
-1. **完全等价的功能契约**：严格遵循 `client-plugin@0.3.0` (兼容 `0.2.0`) WIT 规范，保持输入输出语义与原 Rust 插件完全对齐；
+1. **完全等价的功能契约**：严格遵循 `client-plugin@0.4.0` WIT 规范，保持输入输出语义与原 Rust 插件完全对齐；
 2. **纯净的 Freestanding 沙箱**：编译目标为 `wasm32-freestanding`，零外部 libc/WASI 导入（`no automatic WASI adapters`），体积轻量且启动迅速；
 3. **现代化的 Webview-HTML 体验**：使用 `webview-html` 模式替代传统的简陋 AST 节点树，呈现高度匹配 MicroCrab 设计语言的微质感深色主题、交互式 JSON 检查树与受控编辑体验；
 4. **标准的 Zig 多工程模块化架构**：采用 Zig 0.13.0 标准的 `build.zig` + `build.zig.zon` Monorepo 体系，通用 Canonical ABI/宿主导入能力抽象为 `shared` 模块供各插件复用。
@@ -21,7 +55,7 @@ microcrab-frontend-plugins/
 ├── build.zig                     # 顶层构建脚本（管理共享模块、插件编译与组件打包）
 ├── build.zig.zon                 # 顶层包声明文件
 ├── wit/
-│   └── client-plugin.wit         # 官方 WIT 接口定义 (microcrab:client-plugin@0.3.0)
+│   └── client-plugin.wit         # 官方 WIT 接口定义 (microcrab:client-plugin@0.4.0)
 ├── shared/                       # 核心通用共享库
 │   ├── build.zig                 # shared 模块定义
 │   └── src/
@@ -65,12 +99,24 @@ microcrab-frontend-plugins/
   ```
 
 ### 3.2 导出函数签名（WIT `plugin-exports`）
-根据 Canonical ABI 规定，导出函数在核心 Wasm 层的布局为：
-1. `manifest(ret_ptr: usize)`：写入 `PluginManifest` 结构（id, name, version, targets 列表等）；
-2. `init(ctx_ptr: usize, ctx_len: usize) -> u64`：入参为上下文 JSON，返回初始状态 JSON 字符串 `(ptr, len)`；
-3. `render-view(target: u32, vars_ptr: usize, vars_len: usize, ctx_ptr: usize, ctx_len: usize, ret_ptr: usize)`：输出 `ViewOutput`（schema_version, mode=1[webview-html], content, vars_patch, rerender, error）；
-4. `on-action(action_ptr: usize, action_len: usize, payload_ptr: usize, payload_len: usize, vars_ptr: usize, vars_len: usize, ctx_ptr: usize, ctx_len: usize) -> u64`：响应用户操作，返回更新的 JSON 字符串；
-5. `on-phase(phase_ptr: usize, phase_len: usize, payload_ptr: usize, payload_len: usize, vars_ptr: usize, vars_len: usize, ctx_ptr: usize, ctx_len: usize) -> u64`：处理宿主异步事件（`event-result`）。
+The maintained wasm32 exports return an `i32` pointer to the result area:
+
+- `manifest() -> i32`: 56-byte record. String pointer/length pairs begin at
+  offsets 0, 8 and 16; description option at 24; target pointer/length at 36;
+  network-origins option at 44. The target list is the three bytes `[0, 1, 4]`,
+  representing Sidebar, ExpandedPage and SettingPage. WIT enum list elements
+  occupy one byte; a flattened enum function argument still occupies `i32`.
+- `init(ctx_ptr, ctx_len) -> i32`, `on-action(...) -> i32` and
+  `on-phase(...) -> i32`: 8-byte string return area `(pointer, byte length)`.
+- `render-view(target, vars_ptr, vars_len, ctx_ptr, ctx_len) -> i32`:
+  44-byte record with schema-version at 0, mode at 4, content pair at 8,
+  vars-patch option at 16, rerender at 28 and error option at 32.
+- Each export has a corresponding `cabi_post_*` hook. Owned result bytes remain
+  live until the host has lifted the return and invokes that hook. Input strings
+  transferred to the guest are freed after the export finishes using them.
+- Imported `result<u32,string>` uses a 12-byte return area with a one-byte
+  discriminator at offset 0 and payload at offset 4. Padding bytes are never
+  interpreted as part of the discriminator.
 
 ### 3.3 打包管线（Packaging Pipeline）
 1. `zig build-exe` / `zig build-lib` $\rightarrow$ 产出 `module.wasm`；

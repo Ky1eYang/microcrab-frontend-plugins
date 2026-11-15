@@ -1,3 +1,7 @@
+[hidden] {
+  display: none !important;
+}
+
 :root {
   --bg-base: #0a0c10;
   --bg-card: rgba(22, 27, 34, 0.7);

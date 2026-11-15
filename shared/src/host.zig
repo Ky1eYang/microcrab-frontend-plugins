@@ -6,7 +6,7 @@ pub const ResultU32 = union(enum) {
 };
 
 pub const session_state = struct {
-    extern "microcrab:client-plugin/session-state@0.3.0" fn request(
+    extern "microcrab:client-plugin/session-state@0.4.0" fn request(
         kind_ptr: [*]const u8,
         kind_len: usize,
         payload_ptr: [*]const u8,
@@ -17,7 +17,7 @@ pub const session_state = struct {
     pub fn send(kind: []const u8, payload: []const u8) ResultU32 {
         var ret_buf: [12]u8 = undefined;
         request(kind.ptr, kind.len, payload.ptr, payload.len, &ret_buf);
-        const tag = std.mem.readInt(u32, ret_buf[0..4], .little);
+        const tag = ret_buf[0];
         if (tag == 0) {
             const val = std.mem.readInt(u32, ret_buf[4..8], .little);
             return .{ .ok = val };
@@ -30,7 +30,7 @@ pub const session_state = struct {
 };
 
 pub const session_state_write = struct {
-    extern "microcrab:client-plugin/session-state-write@0.3.0" fn request(
+    extern "microcrab:client-plugin/session-state-write@0.4.0" fn request(
         kind_ptr: [*]const u8,
         kind_len: usize,
         payload_ptr: [*]const u8,
@@ -41,7 +41,7 @@ pub const session_state_write = struct {
     pub fn send(kind: []const u8, payload: []const u8) ResultU32 {
         var ret_buf: [12]u8 = undefined;
         request(kind.ptr, kind.len, payload.ptr, payload.len, &ret_buf);
-        const tag = std.mem.readInt(u32, ret_buf[0..4], .little);
+        const tag = ret_buf[0];
         if (tag == 0) {
             const val = std.mem.readInt(u32, ret_buf[4..8], .little);
             return .{ .ok = val };

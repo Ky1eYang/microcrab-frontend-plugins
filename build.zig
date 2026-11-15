@@ -13,6 +13,38 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("shared/src/root.zig"),
     });
 
+    const bundler = b.addExecutable(.{
+        .name = "bundle_ui",
+        .root_source_file = b.path("tools/bundle.zig"),
+        .target = b.host,
+        .optimize = .Debug,
+    });
+    const bundle = b.addRunArtifact(bundler);
+    bundle.addFileArg(b.path("plugins/state-viewer/ui/index.html"));
+    bundle.addFileArg(b.path("plugins/state-viewer/ui/style.css"));
+    bundle.addFileArg(b.path("plugins/state-viewer/ui/app.js"));
+    const generated_html = bundle.addOutputFileArg("bundle.html");
+    const assets = b.addWriteFiles();
+    _ = assets.addCopyFile(generated_html, "bundle.html");
+    const assets_module = b.createModule(.{
+        .root_source_file = assets.add("ui_assets.zig", "pub const html = @embedFile(\"bundle.html\");\n"),
+    });
+
+    const test_step = b.step("test", "Run native State governance/parser and installer tests");
+    const state_tests = b.addTest(.{
+        .root_source_file = b.path("plugins/state-viewer/src/state.zig"),
+        .target = b.host,
+        .optimize = .Debug,
+    });
+    state_tests.root_module.addImport("shared", shared_mod);
+    test_step.dependOn(&b.addRunArtifact(state_tests).step);
+    const installer_tests = b.addTest(.{
+        .root_source_file = b.path("tools/install.zig"),
+        .target = b.host,
+        .optimize = .Debug,
+    });
+    test_step.dependOn(&b.addRunArtifact(installer_tests).step);
+
     // 1. Build Core wasm for State Viewer
     const state_viewer = b.addExecutable(.{
         .name = "state_viewer",
@@ -23,6 +55,7 @@ pub fn build(b: *std.Build) void {
     state_viewer.entry = .disabled;
     state_viewer.rdynamic = true;
     state_viewer.root_module.addImport("shared", shared_mod);
+    state_viewer.root_module.addImport("ui_assets", assets_module);
 
     const install_core = b.addInstallArtifact(state_viewer, .{});
     b.getInstallStep().dependOn(&install_core.step);

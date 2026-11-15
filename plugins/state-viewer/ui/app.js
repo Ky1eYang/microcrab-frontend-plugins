@@ -1,22 +1,9 @@
 (function () {
-  let state = (function() {
-    try {
-      const injected = /*INITIAL_STATE*/;
-      if (injected && typeof injected === "object") {
-        return injected;
-      }
-    } catch (_) {}
-    return {
-      values: {},
-      metadata: {},
-      loading: false,
-      has_snapshot: false,
-      search: "",
-      show_invisible: false,
-      error: "",
-      locale: "zh-CN"
-    };
-  })();
+  let state = {
+    values: {}, metadata: {}, descriptors: {}, loading: false,
+    has_snapshot: false, search: "", show_invisible: false,
+    error: "", locale: "zh-CN", mutation_status: "idle"
+  };
 
   const isZh = () => !String(state.locale || "").toLowerCase().startsWith("en");
 
@@ -72,26 +59,37 @@
   let activeEditKey = null;
   let isCreatingNew = false;
   let pendingDeleteKey = null;
+  let capturedWitness = null;
+  let capturedSession = null;
+  let submittedOperation = null;
+  const busy = () => ["pending", "saving", "queued", "unknown"].includes(state.mutation_status);
 
   function canEdit(key) {
-    const meta = (state.metadata && state.metadata[key]) || null;
-    if (!meta) return true; // Ad-hoc client variables default to editable
-    if (Array.isArray(meta.editors)) {
-      return meta.editors.includes("client");
-    }
-    return true;
+    return state.descriptors?.[key]?.kind === "custom" && state.descriptors[key].editable === true;
   }
 
   function canDelete(key) {
-    const meta = (state.metadata && state.metadata[key]) || null;
-    if (!meta) return true; // Ad-hoc client variables default to deletable
-    if (meta.owner) {
-      return meta.owner === "client";
-    }
-    return false;
+    return state.descriptors?.[key]?.kind === "custom" && state.descriptors[key].deletable === true && state.metadata?.[key]?.owner === "client";
   }
 
   function render() {
+    const status = document.getElementById("operation-status");
+    const observe = document.getElementById("observe-operation");
+    const activeModal = el.modal.classList.contains("open") ? el.modal : el.deleteModal.classList.contains("open") ? el.deleteModal : null;
+    const observeContainer = activeModal ? activeModal.querySelector(".modal-footer") : document.getElementById("operation-controls");
+    if (observe.parentElement !== observeContainer) observeContainer.appendChild(observe);
+    status.textContent = state.mutation_error || state.error || (busy() ? (isZh() ? "变更状态：" : "Change status: ") + state.mutation_status : "");
+    observe.disabled = Boolean(state.mutation_observing);
+    observe.hidden = !["unknown", "queued"].includes(state.mutation_status);
+    observe.textContent = isZh() ? "查询此操作结果" : "Observe this operation";
+    el.btnNew.disabled = busy() || !state.has_snapshot;
+    el.btnModalSave.disabled = busy() || (!isCreatingNew && activeEditKey !== null && !canEdit(activeEditKey));
+    el.btnDeleteConfirm.disabled = busy();
+    el.btnModalCancel.disabled = busy();
+    el.btnDeleteCancel.disabled = busy();
+    if (el.modal.classList.contains("open")) el.modalAlert.textContent = state.mutation_error || state.error || "";
+    if (el.deleteModal.classList.contains("open")) el.deleteMsg.textContent = state.mutation_error || state.error || i18n.confirmDeletePrompt(pendingDeleteKey);
+    el.btnRefresh.title = i18n.refresh();
     el.search.placeholder = i18n.searchPlaceholder();
     el.btnNew.textContent = i18n.newField();
     el.btnInvisible.classList.toggle("active", Boolean(state.show_invisible));
@@ -159,15 +157,15 @@
     let html = "";
     for (const key of matchedKeys) {
       const val = state.values[key];
-      const meta = state.metadata ? state.metadata[key] : {};
+      const meta = (state.metadata && state.metadata[key]) || {};
       const editable = canEdit(key);
       const deletable = canDelete(key);
 
       const valFormatted = typeof val === "object" ? JSON.stringify(val, null, 2) : String(val);
       const type = Array.isArray(val) ? "array" : typeof val;
 
-      const isInvisible = meta.visibility === "invisible";
-      const isPersisted = meta.persistence === "persisted";
+      const isInvisible = Boolean(meta.visibility === "invisible");
+      const isPersisted = Boolean(meta.persistence === "persisted");
 
       const editTitle = i18n.editTitle(editable);
       const deleteTitle = i18n.deleteTitle(deletable);
@@ -231,6 +229,10 @@
   }
 
   function openEditModal(key, isNew) {
+    if (busy() || !state.has_snapshot || (!isNew && !canEdit(key))) return;
+    capturedWitness = structuredClone(state.witness);
+    capturedSession = state.session_id;
+    submittedOperation = null;
     isCreatingNew = isNew;
     activeEditKey = key;
     el.modalAlert.textContent = "";
@@ -277,33 +279,30 @@
       parsedVal = el.modalVal.value;
     }
 
-    if (window.microcrab && window.microcrab.action) {
-      window.microcrab.action("save-json", {
-        key: key,
-        value: parsedVal,
-        is_new: isCreatingNew
-      });
+    if (busy() || capturedSession !== state.session_id) return;
+    if (!capturedWitness || typeof crypto?.randomUUID !== "function") {
+      el.modalAlert.textContent = isZh() ? "缺少状态版本或安全操作标识；请重新打开编辑器。" : "Missing state witness or secure operation identity; reopen the editor.";
+      return;
     }
-
-    // Optimistic Local Update
-    state.values = state.values || {};
-    state.values[key] = parsedVal;
-    if (isCreatingNew) {
-      state.metadata = state.metadata || {};
-      state.metadata[key] = {
-        owner: "client",
-        visibility: "visible",
-        persistence: "persisted",
-        editors: ["agent", "client", "runtime"]
-      };
-    }
+    if (!window.microcrab?.action) return;
+    submittedOperation = crypto.randomUUID();
+    state.mutation_status = "saving";
+    window.microcrab.action("save-json", {
+      operation_id: submittedOperation,
+      expected: capturedWitness,
+      key,
+      value: parsedVal,
+      is_new: isCreatingNew
+    });
     render();
-
-    closeEditModal();
   }
 
   // Custom Inline Delete Modal
   function openDeleteModal(key) {
+    if (busy() || !canDelete(key)) return;
+    capturedWitness = structuredClone(state.witness);
+    capturedSession = state.session_id;
+    submittedOperation = null;
     pendingDeleteKey = key;
     el.deleteMsg.textContent = i18n.confirmDeletePrompt(key);
     el.deleteModal.classList.add("open");
@@ -315,15 +314,16 @@
   }
 
   function confirmDelete() {
-    if (pendingDeleteKey && window.microcrab && window.microcrab.action) {
-      window.microcrab.action("delete-field", { key: pendingDeleteKey });
-      // Optimistic Local Update
-      if (state.values) {
-        delete state.values[pendingDeleteKey];
-        render();
-      }
-    }
-    closeDeleteModal();
+    if (busy() || capturedSession !== state.session_id || !pendingDeleteKey) return;
+    if (!capturedWitness || typeof crypto?.randomUUID !== "function" || !window.microcrab?.action) return;
+    submittedOperation = crypto.randomUUID();
+    state.mutation_status = "saving";
+    window.microcrab.action("delete-field", {
+      operation_id: submittedOperation,
+      expected: capturedWitness,
+      key: pendingDeleteKey
+    });
+    render();
   }
 
   function escapeHtml(str) {
@@ -354,11 +354,28 @@
   el.btnDeleteCancel.addEventListener("click", closeDeleteModal);
   el.btnDeleteConfirm.addEventListener("click", confirmDelete);
 
+  document.getElementById("observe-operation").addEventListener("click", () => {
+    if (!state.mutation_observing && window.microcrab?.action) {
+      window.microcrab.action("observe-operation", {});
+    }
+  });
+
   // microcrab state listener
   if (window.microcrab && window.microcrab.onViewState) {
     window.microcrab.onViewState((next) => {
       if (next && typeof next === "object") {
+        const previousSession = state.session_id;
         state = { ...state, ...next };
+        if (previousSession && previousSession !== state.session_id) {
+          closeEditModal();
+          closeDeleteModal();
+          submittedOperation = null;
+        }
+        if (submittedOperation && state.mutation_operation_id === submittedOperation && state.mutation_status === "saved") {
+          closeEditModal();
+          closeDeleteModal();
+          submittedOperation = null;
+        }
         render();
       }
     });

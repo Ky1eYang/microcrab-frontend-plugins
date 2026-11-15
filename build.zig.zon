@@ -1,6 +1,6 @@
 .{
     .name = "microcrab-frontend-plugins",
-    .version = "0.1.0",
+    .version = "0.4.0",
     .minimum_zig_version = "0.13.0",
     .paths = .{
         "build.zig",
@@ -8,5 +8,8 @@
         "wit",
         "shared",
         "plugins",
+        "tools",
+        "README.md",
+        "SPECIFICATION.md",
     },
 }

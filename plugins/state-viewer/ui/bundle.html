@@ -587,15 +587,15 @@ body {
     let html = "";
     for (const key of matchedKeys) {
       const val = state.values[key];
-      const meta = state.metadata ? state.metadata[key] : {};
+      const meta = (state.metadata && state.metadata[key]) || {};
       const editable = canEdit(key);
       const deletable = canDelete(key);
 
       const valFormatted = typeof val === "object" ? JSON.stringify(val, null, 2) : String(val);
       const type = Array.isArray(val) ? "array" : typeof val;
 
-      const isInvisible = meta.visibility === "invisible";
-      const isPersisted = meta.persistence === "persisted";
+      const isInvisible = Boolean(meta.visibility === "invisible");
+      const isPersisted = Boolean(meta.persistence === "persisted");
 
       const editTitle = i18n.editTitle(editable);
       const deleteTitle = i18n.deleteTitle(deletable);
@@ -705,8 +705,10 @@ body {
       parsedVal = el.modalVal.value;
     }
 
+    const opId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : null;
     if (window.microcrab && window.microcrab.action) {
       window.microcrab.action("save-json", {
+        operation_id: opId,
         key: key,
         value: parsedVal,
         is_new: isCreatingNew
@@ -743,8 +745,12 @@ body {
   }
 
   function confirmDelete() {
+    const opId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : null;
     if (pendingDeleteKey && window.microcrab && window.microcrab.action) {
-      window.microcrab.action("delete-field", { key: pendingDeleteKey });
+      window.microcrab.action("delete-field", {
+        operation_id: opId,
+        key: pendingDeleteKey
+      });
       // Optimistic Local Update
       if (state.values) {
         delete state.values[pendingDeleteKey];
