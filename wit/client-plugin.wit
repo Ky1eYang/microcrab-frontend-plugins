@@ -1,0 +1,98 @@
+package microcrab:client-plugin@0.3.0;
+
+interface view-types {
+    enum view-target { sidebar, expanded-page, session-tab, block-slot }
+    enum render-mode { native-json, webview-html }
+    record plugin-manifest {
+        id: string,
+        name: string,
+        version: string,
+        description: option<string>,
+        /// Only declared targets may be invoked. Each target owns its output;
+        /// declaration does not imply shared presentation or nonempty content.
+        targets: list<view-target>,
+        network-origins: option<list<string>>,
+    }
+    /// Native content is an AST JSON document or JSON null for intentional no-view.
+    /// No-view replaces old surface content; it is cached as a completed response.
+    /// HTML content is {html:string,view_state?:JSON}; view_state is a safe projection.
+    /// An error renders no plugin content and retains its concrete diagnostic.
+    /// Missing/malformed records are errors, not intentional no-view. State patches
+    /// remain independent of view presence; default no-view uses rerender=false.
+    record view-output {
+        schema-version: u32,
+        mode: render-mode,
+        content: string,
+        vars-patch: option<string>,
+        rerender: bool,
+        error: option<string>,
+    }
+}
+/// Imports queue work; completion arrives through on-phase("event-result", ...).
+interface session-state {
+    request: func(kind: string, payload: string) -> result<u32, string>;
+}
+/// Mutation is a separate actual import; session-state grants read access only.
+interface session-state-write {
+    request: func(kind: string, payload: string) -> result<u32, string>;
+}
+interface net {
+    request: func(kind: string, payload: string) -> result<u32, string>;
+}
+interface conversation {
+    request: func(kind: string, payload: string) -> result<u32, string>;
+}
+interface storage {
+    get: func(key: string) -> option<string>;
+    set: func(key: string, value: string) -> result<u32, string>;
+    remove: func(key: string) -> result<u32, string>;
+}
+interface session-manager {
+    sessions: func() -> string;
+    projects: func() -> string;
+}
+world plugin-exports {
+    use view-types.{plugin-manifest, view-target, view-output};
+    export manifest: func() -> plugin-manifest;
+    export init: func(ctx: string) -> string;
+    export render-view: func(target: view-target, vars: string, ctx: string) -> view-output;
+    export on-action: func(action: string, payload: string, vars: string, ctx: string) -> string;
+    export on-phase: func(phase: string, payload: string, vars: string, ctx: string) -> string;
+}
+world client-plugin {
+    include plugin-exports;
+    import session-state;
+    import session-state-write;
+    import net;
+    import conversation;
+    import storage;
+    import session-manager;
+}
+/// The maintained editor requests State read/write and no network/storage.
+world state-viewer {
+    include plugin-exports;
+    import session-state;
+    import session-state-write;
+}
+/// Generic behavioral fixtures need no ambient Host capabilities.
+world fixture {
+    include plugin-exports;
+}
+/// Surface fixtures explicitly request decoration authority, never State/network.
+world surface-fixture {
+    include plugin-exports;
+    import conversation;
+}
+
+/// Optional model tool provider. Visual-only worlds do not include these exports.
+/// start-tool returns PluginResult.tool_completion pending or terminal immediately.
+/// Host requests complete through on-phase(event-result); no export awaits I/O.
+/// All completions echo the complete host tool_invocation identity from ctx.
+interface resources { request: func(kind: string, payload: string) -> result<u32, string>; }
+world tool-plugin {
+    include plugin-exports;
+    export start-tool: func(request: string, ctx: string) -> string;
+    export cancel-tool: func(ctx: string) -> string;
+    import net;
+    import resources;
+}
