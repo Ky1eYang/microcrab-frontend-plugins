@@ -32,13 +32,18 @@
     refresh: () => isZh() ? "刷新" : "Refresh",
     newField: () => isZh() ? "+ 新建变量" : "+ New Variable",
     readOnly: () => isZh() ? "只读受保护" : "Read Only",
-    edit: () => isZh() ? "编辑" : "Edit",
-    delete: () => isZh() ? "删除" : "Delete",
+    editTitle: (can) => can ? (isZh() ? "编辑此变量" : "Edit variable") : (isZh() ? "此变量受保护，无编辑权限 (缺少 client 授权)" : "Protected variable (missing client edit permission)"),
+    deleteTitle: (can) => can ? (isZh() ? "删除此变量" : "Delete variable") : (isZh() ? "此变量非客户端所有 (Owner 不是 client)，无法删除" : "Variable not owned by client (cannot delete)"),
     save: () => isZh() ? "保存变更" : "Save Changes",
     cancel: () => isZh() ? "取消" : "Cancel",
     confirmDeletePrompt: (key) => isZh() ? `确定要从会话状态中删除变量 "${key}" 吗？此操作无法撤销。` : `Are you sure you want to delete variable "${key}"? This cannot be undone.`,
     invalidJson: () => isZh() ? "无效的 JSON 格式" : "Invalid JSON syntax",
     cannotEditReadOnly: () => isZh() ? "此字段受只读保护，不可修改" : "This field is read-only protected"
+  };
+
+  const ICONS = {
+    edit: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`,
+    trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`
   };
 
   // DOM elements
@@ -68,11 +73,20 @@
   let isCreatingNew = false;
   let pendingDeleteKey = null;
 
-  function isReadOnly(key) {
-    const meta = state.metadata ? state.metadata[key] : null;
-    if (!meta) return false;
+  function canEdit(key) {
+    const meta = (state.metadata && state.metadata[key]) || null;
+    if (!meta) return true; // Ad-hoc client variables default to editable
     if (Array.isArray(meta.editors)) {
-      return !meta.editors.includes("client");
+      return meta.editors.includes("client");
+    }
+    return true;
+  }
+
+  function canDelete(key) {
+    const meta = (state.metadata && state.metadata[key]) || null;
+    if (!meta) return true; // Ad-hoc client variables default to deletable
+    if (meta.owner) {
+      return meta.owner === "client";
     }
     return false;
   }
@@ -102,7 +116,7 @@
       const isInvisible = meta && meta.visibility === "invisible";
       if (isInvisible && !state.show_invisible) continue;
       eligible++;
-      if (isReadOnly(k)) readOnlyCount++;
+      if (!canEdit(k)) readOnlyCount++;
     }
 
     el.summary.textContent = i18n.fieldsCount(eligible, readOnlyCount);
@@ -146,12 +160,17 @@
     for (const key of matchedKeys) {
       const val = state.values[key];
       const meta = state.metadata ? state.metadata[key] : {};
-      const ro = isReadOnly(key);
+      const editable = canEdit(key);
+      const deletable = canDelete(key);
+
       const valFormatted = typeof val === "object" ? JSON.stringify(val, null, 2) : String(val);
       const type = Array.isArray(val) ? "array" : typeof val;
 
       const isInvisible = meta.visibility === "invisible";
       const isPersisted = meta.persistence === "persisted";
+
+      const editTitle = i18n.editTitle(editable);
+      const deleteTitle = i18n.deleteTitle(deletable);
 
       html += `
         <div class="var-card" data-key="${escapeHtml(key)}">
@@ -163,17 +182,31 @@
             <div class="card-badges">
               ${isInvisible ? `<span class="badge badge-invisible">Invisible</span>` : `<span class="badge badge-visible">Visible</span>`}
               ${isPersisted ? `<span class="badge badge-persisted">Persisted</span>` : ""}
-              ${ro ? `<span class="badge badge-locked">🔒 ${i18n.readOnly()}</span>` : ""}
+              ${!editable ? `<span class="badge badge-locked">🔒 ${i18n.readOnly()}</span>` : ""}
             </div>
           </div>
           <div class="val-preview">${escapeHtml(valFormatted)}</div>
           <div class="card-footer">
             <div style="font-size:11px;color:var(--text-sub);">
-              ${ro ? "只读保护不可删除" : "Client-owned"}
+              ${!deletable ? (isZh() ? "受保护 (非 Client 所有)" : "Protected") : "Client-owned"}
             </div>
-            <div class="card-ops">
-              ${!ro ? `<button class="btn btn-sm op-edit" data-key="${escapeHtml(key)}">${i18n.edit()}</button>` : ""}
-              ${!ro ? `<button class="btn btn-sm op-del" data-key="${escapeHtml(key)}" style="color:var(--badge-red);">${i18n.delete()}</button>` : ""}
+            <div class="action-buttons">
+              <button 
+                class="btn-icon op-edit" 
+                data-key="${escapeHtml(key)}" 
+                title="${editTitle}"
+                ${!editable ? "disabled" : ""}
+              >
+                ${ICONS.edit}
+              </button>
+              <button 
+                class="btn-icon btn-icon-danger op-del" 
+                data-key="${escapeHtml(key)}" 
+                title="${deleteTitle}"
+                ${!deletable ? "disabled" : ""}
+              >
+                ${ICONS.trash}
+              </button>
             </div>
           </div>
         </div>
@@ -182,12 +215,18 @@
 
     el.list.innerHTML = html;
 
-    // Attach buttons
+    // Attach buttons with disabled guards
     el.list.querySelectorAll(".op-edit").forEach(btn => {
-      btn.addEventListener("click", () => openEditModal(btn.dataset.key, false));
+      btn.addEventListener("click", () => {
+        if (btn.disabled) return;
+        openEditModal(btn.dataset.key, false);
+      });
     });
     el.list.querySelectorAll(".op-del").forEach(btn => {
-      btn.addEventListener("click", () => openDeleteModal(btn.dataset.key));
+      btn.addEventListener("click", () => {
+        if (btn.disabled) return;
+        openDeleteModal(btn.dataset.key);
+      });
     });
   }
 
@@ -203,13 +242,13 @@
       el.modalVal.value = "{\n  \"example\": true\n}";
       el.btnModalSave.disabled = false;
     } else {
-      el.modalTitle.textContent = `${i18n.edit()}: ${key}`;
+      el.modalTitle.textContent = `${isZh() ? "编辑" : "Edit"}: ${key}`;
       el.modalKey.value = key;
       el.modalKey.disabled = true;
       const val = state.values[key];
       el.modalVal.value = JSON.stringify(val, null, 2);
 
-      if (isReadOnly(key)) {
+      if (!canEdit(key)) {
         el.modalAlert.textContent = i18n.cannotEditReadOnly();
         el.btnModalSave.disabled = true;
       } else {
@@ -227,7 +266,7 @@
   function saveModal() {
     const key = el.modalKey.value.trim();
     if (!key) {
-      el.modalAlert.textContent = "变量名不可为空";
+      el.modalAlert.textContent = isZh() ? "变量名不可为空" : "Variable name cannot be empty";
       return;
     }
 
@@ -246,10 +285,24 @@
       });
     }
 
+    // Optimistic Local Update
+    state.values = state.values || {};
+    state.values[key] = parsedVal;
+    if (isCreatingNew) {
+      state.metadata = state.metadata || {};
+      state.metadata[key] = {
+        owner: "client",
+        visibility: "visible",
+        persistence: "persisted",
+        editors: ["agent", "client", "runtime"]
+      };
+    }
+    render();
+
     closeEditModal();
   }
 
-  // Custom Inline Delete Modal to avoid sandbox window.confirm failure
+  // Custom Inline Delete Modal
   function openDeleteModal(key) {
     pendingDeleteKey = key;
     el.deleteMsg.textContent = i18n.confirmDeletePrompt(key);
@@ -264,6 +317,11 @@
   function confirmDelete() {
     if (pendingDeleteKey && window.microcrab && window.microcrab.action) {
       window.microcrab.action("delete-field", { key: pendingDeleteKey });
+      // Optimistic Local Update
+      if (state.values) {
+        delete state.values[pendingDeleteKey];
+        render();
+      }
     }
     closeDeleteModal();
   }

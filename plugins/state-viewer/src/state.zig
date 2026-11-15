@@ -58,11 +58,15 @@ pub const StateManager = struct {
         return "{}";
     }
 
-    var op_seq: u32 = 1;
+    var op_seq: u64 = 1;
 
     fn getNextOpId(buf: []u8) []const u8 {
         op_seq += 1;
-        return std.fmt.bufPrint(buf, "op-{d}", .{op_seq}) catch "op-gen";
+        const prefix = if (global.invocation_id.len > 0 and !std.mem.eql(u8, global.invocation_id, "op-init"))
+            global.invocation_id
+        else
+            "op";
+        return std.fmt.bufPrint(buf, "{s}-{d}", .{ prefix, op_seq }) catch "op-unique";
     }
 
     fn executeSaveJson(payload_json: []const u8) ![]const u8 {
@@ -73,12 +77,9 @@ pub const StateManager = struct {
         // Extract value: could be an object, array, or primitive
         const val_str = extractRawValue(payload_json, "value") orelse "null";
 
-        // Generate operation_id
-        var op_id_buf: [64]u8 = undefined;
-        const op_id = if (global.invocation_id.len > 0 and !std.mem.eql(u8, global.invocation_id, "op-init"))
-            global.invocation_id
-        else
-            getNextOpId(&op_id_buf);
+        // Generate operation_id (always distinct with monotonic sequence counter)
+        var op_id_buf: [128]u8 = undefined;
+        const op_id = getNextOpId(&op_id_buf);
 
         // Assemble change object
         var change_buf = std.ArrayList(u8).init(allocator);
@@ -105,7 +106,11 @@ pub const StateManager = struct {
         try req_buf.appendSlice("{\"operation_id\":");
         try std.json.encodeJsonString(op_id, .{}, req_buf.writer());
         try req_buf.appendSlice(",\"expected\":");
-        try std.json.encodeJsonString(global.witness, .{}, req_buf.writer());
+        if (global.witness.len > 0 and global.witness[0] == '{') {
+            try req_buf.appendSlice(global.witness);
+        } else {
+            try req_buf.appendSlice("null");
+        }
         try req_buf.appendSlice(",\"change\":");
         try req_buf.appendSlice(change_buf.items);
         try req_buf.appendSlice("}");
@@ -114,6 +119,8 @@ pub const StateManager = struct {
         switch (res) {
             .ok => {
                 global.error_msg = "";
+                // Immediate State Inspection Sync
+                _ = shared.host.session_state.send("state-inspection", "{}");
                 return "{\"status\":\"saved\"}";
             },
             .err => |msg| {
@@ -126,11 +133,8 @@ pub const StateManager = struct {
     fn executeDeleteField(payload_json: []const u8) ![]const u8 {
         const key = extractJsonFieldString(payload_json, "key", allocator) orelse return "{\"error\":\"Missing key\"}";
 
-        var op_id_buf: [64]u8 = undefined;
-        const op_id = if (global.invocation_id.len > 0 and !std.mem.eql(u8, global.invocation_id, "op-init"))
-            global.invocation_id
-        else
-            getNextOpId(&op_id_buf);
+        var op_id_buf: [128]u8 = undefined;
+        const op_id = getNextOpId(&op_id_buf);
 
         var change_buf = std.ArrayList(u8).init(allocator);
         defer change_buf.deinit();
@@ -145,7 +149,11 @@ pub const StateManager = struct {
         try req_buf.appendSlice("{\"operation_id\":");
         try std.json.encodeJsonString(op_id, .{}, req_buf.writer());
         try req_buf.appendSlice(",\"expected\":");
-        try std.json.encodeJsonString(global.witness, .{}, req_buf.writer());
+        if (global.witness.len > 0 and global.witness[0] == '{') {
+            try req_buf.appendSlice(global.witness);
+        } else {
+            try req_buf.appendSlice("null");
+        }
         try req_buf.appendSlice(",\"change\":");
         try req_buf.appendSlice(change_buf.items);
         try req_buf.appendSlice("}");
@@ -154,6 +162,8 @@ pub const StateManager = struct {
         switch (res) {
             .ok => {
                 global.error_msg = "";
+                // Immediate State Inspection Sync
+                _ = shared.host.session_state.send("state-inspection", "{}");
                 return "{\"status\":\"deleted\"}";
             },
             .err => |msg| {
@@ -186,8 +196,11 @@ pub const StateManager = struct {
                 global.metadata_json = allocator.dupe(u8, payload[start .. start + len]) catch "{}";
             }
         }
-        if (extractJsonFieldString(payload, "witness", allocator)) |w| {
-            global.witness = w;
+        if (std.mem.indexOf(u8, payload, "\"witness\":")) |pos| {
+            const start = pos + 10;
+            if (findJsonObjectEnd(payload[start..])) |len| {
+                global.witness = allocator.dupe(u8, payload[start .. start + len]) catch "{}";
+            }
         }
     }
 
