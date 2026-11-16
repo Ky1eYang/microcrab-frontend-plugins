@@ -7,7 +7,7 @@ const embedded_html = @import("ui_assets").html;
 
 // Canonical ABI enum list elements occupy one byte (five cases). Flattened
 // function parameters still use i32. Do not store this list as u32 elements.
-const TARGETS = [_]u8{ 0, 1, 4 };
+const TARGETS = [_]u8{ 0, 1 };
 const MANIFEST_ID = "microcrab.state-viewer";
 const MANIFEST_NAME = "State Viewer";
 const MANIFEST_VERSION = "0.4.0";
@@ -93,16 +93,13 @@ fn viewOutput(mode: shared.types.RenderMode, content: []const u8, err: ?[]const 
 fn viewFailure(err: anyerror) [*]const u8 {
     return viewOutput(.native_json, "null", @errorName(err));
 }
-fn informationalView(ctx: []const u8, settings: bool) ![*]const u8 {
+fn informationalView(ctx: []const u8) ![*]const u8 {
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, ctx, .{});
     defer parsed.deinit();
     const locale = if (parsed.value == .object) parsed.value.object.get("locale") else null;
     const english = if (locale) |v| v == .string and std.mem.startsWith(u8, v.string, "en") else false;
-    const message = if (settings)
-        (if (english) "State Viewer has no plugin parameters. Inspect session state in the conversation sidebar or expanded view." else "状态查看器没有可配置的插件参数。请在会话侧栏或展开视图中查看会话状态。")
-    else
-        (if (english) "Select a conversation to inspect its session state." else "请选择一个会话以查看其状态。");
-    const html = try std.fmt.allocPrint(allocator, "<p role=\"status\" style=\"font:14px system-ui;line-height:1.6;margin:20px;color:inherit\">{s}</p>", .{message});
+    const message = if (english) "Select a conversation to inspect its session state." else "请选择一个会话以查看其状态。";
+    const html = try std.fmt.allocPrint(allocator, "<p role=\"status\" style=\"font:14px var(--microcrab-font-sans);line-height:1.6;margin:20px;color:inherit\">{s}</p>", .{message});
     defer allocator.free(html);
     const envelope = try shared.json.createEnvelope(allocator, html, "{}");
     releaseView();
@@ -113,11 +110,10 @@ export fn @"render-view"(target: u32, vars_ptr: [*]const u8, vars_len: usize, ct
     defer allocator.free(vars_ptr[0..vars_len]);
     defer allocator.free(ctx_ptr[0..ctx_len]);
     // Reject undeclared targets before any context or State effects.
-    if (target != 0 and target != 1 and target != 4) return viewOutput(.native_json, "null", null);
+    if (target != 0 and target != 1) return viewOutput(.native_json, "null", null);
     const ctx = ctx_ptr[0..ctx_len];
     StateManager.updateContext(ctx) catch |err| return viewFailure(err);
-    if (target == 4) return informationalView(ctx, true) catch |err| viewFailure(err);
-    if (!StateManager.hasSession()) return informationalView(ctx, false) catch |err| viewFailure(err);
+    if (!StateManager.hasSession()) return informationalView(ctx) catch |err| viewFailure(err);
     StateManager.ensureInspection() catch |err| return viewFailure(err);
     const state = StateManager.buildViewStateJson(allocator) catch |err| return viewFailure(err);
     defer allocator.free(state);

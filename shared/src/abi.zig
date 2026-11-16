@@ -27,13 +27,3 @@ export fn cabi_realloc(
 
     return new_mem;
 }
-
-pub fn allocateBytes(bytes: []const u8) ![*]const u8 {
-    const mem = try allocator.alloc(u8, bytes.len);
-    @memcpy(mem, bytes);
-    return mem.ptr;
-}
-
-pub fn allocateString(str: []const u8) ![*]const u8 {
-    return allocateBytes(str);
-}

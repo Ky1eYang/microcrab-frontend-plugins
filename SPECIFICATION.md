@@ -4,15 +4,63 @@
 
 This section governs the maintained implementation; the original design text
 below remains as provenance where it describes visual proposals rather than
-verified behavior. The package and State Viewer manifest release are `0.4.0`.
+verified behavior. The package, State Viewer and MCP Bridge manifest releases are
+`0.4.0`. The target restrictions in the following State governance paragraphs apply
+to State Viewer; MCP declares Sidebar and SettingPage with the `tool-plugin` world.
+
+### Modular Component builds and MCP Bridge
+
+Every default and selected Zig build emits a validated true WebAssembly Component:
+Core compilation stays internal, selected WIT world embedding precedes component
+creation, validation and WIT extraction. Actual default optimization is ReleaseSmall;
+`-Doptimize` is explicit. Root-only per-plugin registrations own target/world/assets
+metadata, with common build-time utilities separate from runtime imports. Only explicit
+diagnostic `*-core` targets install Core modules. UI assets are generated in cache.
+
+MCP imports only `net`/`resources` from ABI0.4, with correlated `start-tool` and
+`cancel-tool`. Its asynchronous path is Resources → Initialize → Notify ACK → List →
+Call; the refreshed catalog, exact host config revision, schema SHA-256 and validated
+arguments authorize the final call. Multi-version negotiation, bounded pagination,
+256-entry scoped call/cursor caches,32 concurrent operation slots,60KiB durable output,
+and16MiB aggregate operation allocations are independent. Server transitions free
+previous catalogs. Cancellation permits one best-effort discard notification; it
+never retries remote effects or claims certainty for a queued remote call.
+
+Settings owns server administration; Sidebar owns the current resident Session's
+observation window only. History is capped at128 records/2MiB serialized retained
+history, terminal-first eviction, ten-row pages and4096-byte UTF-8 detail chunks.
+Leaving a Session, refresh or history replacement clears it. Clearing display history
+does not cancel pending effects. Host-sampled wall/monotonic context times are
+observational, never deadline authority. Both authored surfaces consume host theme
+tokens. New credentials transiently pass through the password field and one fenced
+save action, with raw/decoded/encoded action buffers wiped even on parse failure;
+no credential is retained in Vars, projections or history. Saved credentials remain
+host-owned and never return to the plugin.
+
+Explicit aggregate installation validates every selected artifact and all target
+indexes before pointer changes, locks each destination, preserves unselected entries,
+defaults and explicit predecessors, stages immutable bytes then atomically publishes
+one index per directory. `--adopt-current` is an explicit authorized publication
+policy: verify the current selected packaged bytes/hash before retaining that exact
+predecessor. No real artifact digest is hardcoded in source. Atomicity across separate
+directories is not claimed. See README for root Cargo and direct Zig commands.
 
 The exact official ABI source is the frontend-owned
 `crates/client/plugins/wit/client-plugin.wit`; the Zig workspace copy must be
-byte-identical. Only ABI0.4 imports are emitted. Sidebar and ExpandedPage retain
-the authored UI. SettingPage is localized information only: no plugin parameters;
-inspect state in the conversation sidebar or expanded view. No State import is
-issued for SettingPage, initialization or a missing selected Session. Undeclared
-targets intentionally return native JSON `null` before imports.
+byte-identical. Only ABI0.4 imports are emitted. Sidebar and ExpandedPage are the
+only declared targets (`[0, 1]`). The WIT
+enum remains unchanged, including SettingPage; the plugin has no settings surface
+or settings-specific branch. Undeclared targets, including SettingPage, intentionally
+return native JSON `null` before context processing or State imports. Initialization
+and a missing selected Session issue no State imports; declared views without a
+Session retain localized conversation-selection information.
+
+The authored layout and interactions consume the host HTML theme bridge: resolved
+root `data-theme`, `color-scheme` and `--microcrab-*` CSS variables update in place.
+All colors, overlay/shadow and font values derive from host tokens. Chrome, field
+names and visibility/persistence badges remain neutral; protected fields and
+destructive actions use semantic warning/danger colors. No guest theme preference
+or independent dark palette is maintained.
 
 Flat `ctx.session_id` and `ctx.locale` are consumed on every lifecycle call;
 owner/server/history/instance changes revoke stale snapshot/request state.
@@ -27,10 +75,11 @@ Agent/Client/Runtime editor set; existing sets retain their attributes; deletion
 require Client ownership. No role or Session can be selected by action payloads.
 
 `ui/index.html`, `ui/style.css` and `ui/app.js` are the authored build inputs.
-`tools/bundle.zig` generates the embedded HTML in the build cache. Historical
-tracked bundles, including prior user edits, are preserved but unused by builds.
+`tools/bundle.zig` generates the embedded HTML in the build cache. The two unused
+historical tracked bundles were removed after verifying no maintained build references.
 `zig build component` builds, embeds and validates without staging browser assets.
-`zig build test` runs native State governance/parser and installer tests.
+`zig build test` runs native State governance, MCP protocol/runtime/cleanup and
+aggregate installer tests.
 Actual browser acceptance is a separate frontend integration gate.
 
 
@@ -103,8 +152,8 @@ The maintained wasm32 exports return an `i32` pointer to the result area:
 
 - `manifest() -> i32`: 56-byte record. String pointer/length pairs begin at
   offsets 0, 8 and 16; description option at 24; target pointer/length at 36;
-  network-origins option at 44. The target list is the three bytes `[0, 1, 4]`,
-  representing Sidebar, ExpandedPage and SettingPage. WIT enum list elements
+  network-origins option at 44. The target list is the two bytes `[0, 1]`,
+  representing Sidebar and ExpandedPage. WIT enum list elements
   occupy one byte; a flattened enum function argument still occupies `i32`.
 - `init(ctx_ptr, ctx_len) -> i32`, `on-action(...) -> i32` and
   `on-phase(...) -> i32`: 8-byte string return area `(pointer, byte length)`.

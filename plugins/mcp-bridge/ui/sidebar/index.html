@@ -1,0 +1,16 @@
+<style>
+/* CSS will be embedded here */
+</style>
+<main data-testid="mcp-sidebar">
+  <header class="toolbar"><h1 data-i18n="title">工具调用记录</h1><button id="clear-history" data-testid="clear-history" type="button" data-i18n="clear">清空记录</button></header>
+  <p class="hint" data-i18n="retention">仅保留当前会话最近 128 条记录；切换会话或刷新后清空。</p>
+  <section aria-labelledby="metrics-title"><h2 id="metrics-title" data-i18n="metrics">保留记录统计</h2><dl class="metrics"><div><dt data-i18n="total">调用数</dt><dd id="metric-total" data-testid="metric-total">0</dd></div><div><dt data-i18n="successRate">成功率</dt><dd id="metric-success-rate" data-testid="metric-success-rate">—</dd></div><div><dt data-i18n="average">平均耗时</dt><dd id="metric-average-duration" data-testid="metric-average-duration">—</dd></div></dl></section>
+  <p id="sidebar-error" class="notice danger" role="alert" hidden></p>
+  <p id="no-session" class="empty" data-i18n="noSession" hidden>打开会话后，可查看本次会话的工具调用记录。</p>
+  <p id="history-empty" class="empty" data-i18n="empty" hidden>当前没有调用记录。</p>
+  <div id="history-records" data-testid="history-records"></div>
+  <nav class="pagination" aria-label="调用记录分页" id="history-pagination"><button id="history-prev" data-testid="history-prev" type="button" data-i18n="previous">上一页</button><span id="history-page" role="status" aria-live="polite"></span><button id="history-next" data-testid="history-next" type="button" data-i18n="next">下一页</button></nav>
+</main>
+<script>
+/* JS will be embedded here */
+</script>

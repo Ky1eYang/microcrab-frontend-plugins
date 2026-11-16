@@ -4,46 +4,7 @@ const allocator = shared.abi.allocator;
 const Value = std.json.Value;
 const limit = 4 * 1024 * 1024;
 
-// Zig 0.13's dynamic Value parser ignores duplicate_field_behavior. Keep the
-// canonical std.json scanner and explicitly enforce unique decoded object keys.
-const Unique = struct {
-    value: Value,
-    pub fn jsonParse(a: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !Unique {
-        return .{ .value = try readValue(a, source, options, 0) };
-    }
-    fn readValue(a: std.mem.Allocator, source: anytype, options: std.json.ParseOptions, depth: usize) std.json.ParseError(@TypeOf(source.*))!Value {
-        if (depth > 128) return error.UnexpectedToken;
-        const token = try source.nextAllocMax(a, .alloc_always, options.max_value_len.?);
-        return switch (token) {
-            .null => .null,
-            .true => .{ .bool = true },
-            .false => .{ .bool = false },
-            .allocated_string => |s| .{ .string = s },
-            .allocated_number => |s| if (std.fmt.parseInt(i64, s, 10)) |n| .{ .integer = n } else |_| .{ .number_string = s },
-            .array_begin => blk: {
-                var items = std.json.Array.init(a);
-                while (try source.peekNextTokenType() != .array_end) try items.append(try readValue(a, source, options, depth + 1));
-                _ = try source.next();
-                break :blk .{ .array = items };
-            },
-            .object_begin => blk: {
-                var object = std.json.ObjectMap.init(a);
-                while (true) {
-                    const next = try source.nextAllocMax(a, .alloc_always, options.max_value_len.?);
-                    if (next == .object_end) break;
-                    const key = switch (next) {
-                        .allocated_string => |s| s,
-                        else => return error.UnexpectedToken,
-                    };
-                    if (object.contains(key)) return error.DuplicateField;
-                    try object.put(key, try readValue(a, source, options, depth + 1));
-                }
-                break :blk .{ .object = object };
-            },
-            else => error.UnexpectedToken,
-        };
-    }
-};
+const Unique = shared.json.UniqueValue(true);
 fn parseWithAllocator(a: std.mem.Allocator, text: []const u8) !std.json.Parsed(Value) {
     if (text.len > limit) return error.JsonExceeds4MiB;
     const parsed = try std.json.parseFromSlice(Unique, a, text, .{ .allocate = .alloc_always, .duplicate_field_behavior = .@"error" });

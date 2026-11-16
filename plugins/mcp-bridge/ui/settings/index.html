@@ -1,0 +1,26 @@
+<style>
+/* CSS will be embedded here */
+</style>
+<main data-testid="mcp-settings">
+  <header class="toolbar"><div><h1 data-i18n="title">MCP 服务管理</h1><p data-i18n="subtitle">配置工具服务及其访问凭据。</p></div><div class="actions"><button id="refresh-config" data-testid="refresh-config" type="button" data-i18n="refresh">刷新配置</button><button id="add-server" data-testid="add-server" class="primary" type="button" data-i18n="add">添加服务</button></div></header>
+  <p id="settings-status" role="status" aria-live="polite"></p>
+  <p id="settings-error" class="notice danger" role="alert" hidden></p>
+  <section id="server-editor" data-testid="server-editor" aria-labelledby="editor-title" hidden>
+    <h2 id="editor-title"></h2>
+    <form id="server-form" autocomplete="off">
+      <div class="fields"><label><span data-i18n="serverId">服务 ID</span><input id="server-id" data-testid="server-id" required maxlength="128" autocomplete="off" spellcheck="false"></label><label><span data-i18n="endpoint">服务地址</span><input id="server-endpoint" data-testid="server-endpoint" type="url" required autocomplete="off" spellcheck="false" aria-describedby="endpoint-hint"></label></div>
+      <p id="endpoint-hint" class="hint" data-i18n="endpointHint">输入完整 HTTP(S) 地址，可包含路径。</p>
+      <label><span data-i18n="authorization">新授权凭据</span><input id="server-authorization" data-testid="server-authorization" type="password" autocomplete="new-password" spellcheck="false" aria-describedby="credential-hint"></label>
+      <p id="credential-hint" class="hint" data-i18n="credentialHint">留空保留已有凭据。凭据仅在本次保存时发送，提交后立即清空；已保存的凭据不会显示。</p>
+      <div class="checks"><label><input id="clear-authorization" data-testid="clear-authorization" type="checkbox"><span data-i18n="clearAuthorization">清除已保存凭据</span></label><label><input id="server-enabled" data-testid="server-enabled" type="checkbox" checked><span data-i18n="enabledOnSave">保存后启用</span></label></div>
+      <p id="form-error" class="notice danger" role="alert" hidden></p>
+      <div class="actions"><button id="save-config" data-testid="save-config" class="primary" type="button" data-i18n="save">保存配置</button><button id="cancel-edit" type="button" data-i18n="cancel">取消</button></div>
+    </form>
+  </section>
+  <p id="configured-count" class="hint"></p>
+  <div id="servers" data-testid="server-list"></div>
+  <p id="settings-empty" class="empty" data-i18n="empty" hidden>尚未配置服务。添加服务后，可在会话中使用其工具。</p>
+</main>
+<script>
+/* JS will be embedded here */
+</script>

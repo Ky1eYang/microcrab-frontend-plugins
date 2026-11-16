@@ -1,119 +1,90 @@
 const std = @import("std");
+const helpers = @import("shared/src/build_helpers.zig");
+const state_viewer = @import("plugins/state-viewer/build.zig");
+const mcp_bridge = @import("plugins/mcp-bridge/build.zig");
 
 pub fn build(b: *std.Build) void {
-    const wasm_target = b.resolveTargetQuery(.{
-        .cpu_arch = .wasm32,
-        .os_tag = .freestanding,
-    });
-    const optimize = b.standardOptimizeOption(.{
-        .preferred_optimize_mode = .ReleaseSmall,
-    });
-
-    const shared_mod = b.createModule(.{
-        .root_source_file = b.path("shared/src/root.zig"),
-    });
-
+    const optimize: std.builtin.OptimizeMode = b.option(std.builtin.OptimizeMode, "optimize", "Guest optimization mode (default ReleaseSmall)") orelse switch (b.release_mode) {
+        .fast => .ReleaseFast,
+        .safe => .ReleaseSafe,
+        .off, .any, .small => .ReleaseSmall,
+    };
+    const shared = b.createModule(.{ .root_source_file = b.path("shared/src/root.zig") });
     const bundler = b.addExecutable(.{
         .name = "bundle_ui",
         .root_source_file = b.path("tools/bundle.zig"),
         .target = b.host,
         .optimize = .Debug,
     });
-    const bundle = b.addRunArtifact(bundler);
-    bundle.addFileArg(b.path("plugins/state-viewer/ui/index.html"));
-    bundle.addFileArg(b.path("plugins/state-viewer/ui/style.css"));
-    bundle.addFileArg(b.path("plugins/state-viewer/ui/app.js"));
-    const generated_html = bundle.addOutputFileArg("bundle.html");
-    const assets = b.addWriteFiles();
-    _ = assets.addCopyFile(generated_html, "bundle.html");
-    const assets_module = b.createModule(.{
-        .root_source_file = assets.add("ui_assets.zig", "pub const html = @embedFile(\"bundle.html\");\n"),
-    });
-
-    const test_step = b.step("test", "Run native State governance/parser and installer tests");
-    const state_tests = b.addTest(.{
-        .root_source_file = b.path("plugins/state-viewer/src/state.zig"),
+    const context = helpers.Context{ .shared = shared, .bundler = bundler, .optimize = optimize };
+    const plugins = [_]helpers.PluginArtifacts{
+        state_viewer.register(b, context),
+        mcp_bridge.register(b, context),
+    };
+    const selection = b.option([]const u8, "plugins", "Comma-separated aggregate plugin selection (default all)");
+    const install_directory = b.option([]const u8, "install-dir", "Override browser installation destinations with this directory");
+    if (install_directory) |directory| {
+        if (directory.len == 0) {
+            std.log.err("install-dir must be nonempty", .{});
+            b.invalid_user_input = true;
+            return;
+        }
+    }
+    const selected = selectPlugins(b.allocator, &plugins, selection) catch |err| {
+        std.log.err("invalid plugins selection: {s}; expected state-viewer,mcp-bridge", .{@errorName(err)});
+        b.invalid_user_input = true;
+        return;
+    };
+    const all = b.step("all", "Build and validate selected WIT Components");
+    const component = b.step("component", "Build and validate selected WIT Components");
+    const tests = b.step("test", "Run native plugin and installer tests");
+    for (selected) |plugin| {
+        all.dependOn(plugin.component_step);
+        component.dependOn(plugin.component_step);
+        b.getInstallStep().dependOn(plugin.component_step);
+        tests.dependOn(plugin.test_step);
+    }
+    const installer = b.addExecutable(.{
+        .name = "install_plugins",
+        .root_source_file = b.path("tools/install.zig"),
         .target = b.host,
         .optimize = .Debug,
     });
-    state_tests.root_module.addImport("shared", shared_mod);
-    test_step.dependOn(&b.addRunArtifact(state_tests).step);
+    installer.root_module.addImport("shared", shared);
     const installer_tests = b.addTest(.{
         .root_source_file = b.path("tools/install.zig"),
         .target = b.host,
         .optimize = .Debug,
     });
-    test_step.dependOn(&b.addRunArtifact(installer_tests).step);
+    installer_tests.root_module.addImport("shared", shared);
+    const installer_test = b.step("installer-test", "Run native aggregate installer tests");
+    installer_test.dependOn(&installer.step);
+    installer_test.dependOn(&b.addRunArtifact(installer_tests).step);
+    tests.dependOn(installer_test);
 
-    // 1. Build Core wasm for State Viewer
-    const state_viewer = b.addExecutable(.{
-        .name = "state_viewer",
-        .root_source_file = b.path("plugins/state-viewer/src/main.zig"),
-        .target = wasm_target,
-        .optimize = optimize,
-    });
-    state_viewer.entry = .disabled;
-    state_viewer.rdynamic = true;
-    state_viewer.root_module.addImport("shared", shared_mod);
-    state_viewer.root_module.addImport("ui_assets", assets_module);
+    helpers.addFrontendInstall(b, installer, "install-frontend", selected, install_directory);
+    for (plugins) |plugin| {
+        helpers.addFrontendInstall(b, installer, b.fmt("install-{s}", .{plugin.slug}), &.{plugin}, install_directory);
+    }
+}
 
-    const install_core = b.addInstallArtifact(state_viewer, .{});
-    b.getInstallStep().dependOn(&install_core.step);
-
-    // 2. Componentize step using wasm-tools
-    const component_step = b.step("component", "Build WebAssembly Component using wasm-tools");
-
-    const core_wasm_path = b.getInstallPath(.bin, "state_viewer.wasm");
-    const embedded_wasm_path = b.pathJoin(&.{ b.install_path, "bin", "state_viewer.embedded.wasm" });
-    const component_wasm_path = b.pathJoin(&.{ b.install_path, "bin", "state_viewer.component.wasm" });
-
-    // Step A: wasm-tools component embed
-    const embed_cmd = b.addSystemCommand(&.{
-        "wasm-tools",
-        "component",
-        "embed",
-        "wit",
-        "-w",
-        "state-viewer",
-        core_wasm_path,
-        "-o",
-        embedded_wasm_path,
-    });
-    embed_cmd.step.dependOn(&install_core.step);
-
-    // Step B: wasm-tools component new
-    const new_cmd = b.addSystemCommand(&.{
-        "wasm-tools",
-        "component",
-        "new",
-        embedded_wasm_path,
-        "-o",
-        component_wasm_path,
-    });
-    new_cmd.step.dependOn(&embed_cmd.step);
-
-    // Step C: wasm-tools validate
-    const validate_cmd = b.addSystemCommand(&.{
-        "wasm-tools",
-        "validate",
-        component_wasm_path,
-    });
-    validate_cmd.step.dependOn(&new_cmd.step);
-
-    component_step.dependOn(&validate_cmd.step);
-
-    // 3. Install to frontend step
-    const installer = b.addExecutable(.{
-        .name = "install_plugin",
-        .root_source_file = b.path("tools/install.zig"),
-        .target = b.host,
-        .optimize = .Debug,
-    });
-    const run_installer = b.addRunArtifact(installer);
-    run_installer.addArg(component_wasm_path);
-    run_installer.addArg("../microcrab-frontend/frontend/public/plugins");
-    run_installer.step.dependOn(component_step);
-
-    const install_frontend_step = b.step("install-frontend", "Install built component into microcrab-frontend/frontend/public/plugins");
-    install_frontend_step.dependOn(&run_installer.step);
+fn selectPlugins(allocator: std.mem.Allocator, plugins: []const helpers.PluginArtifacts, selection: ?[]const u8) ![]const helpers.PluginArtifacts {
+    const names = selection orelse return plugins;
+    var selected = std.ArrayList(helpers.PluginArtifacts).init(allocator);
+    var items = std.mem.splitScalar(u8, names, ',');
+    while (items.next()) |name| {
+        if (name.len == 0) return error.EmptyPluginSelection;
+        var found = false;
+        for (plugins) |plugin| {
+            if (!std.mem.eql(u8, name, plugin.slug)) continue;
+            found = true;
+            var duplicate = false;
+            for (selected.items) |existing| {
+                if (std.mem.eql(u8, existing.slug, plugin.slug)) duplicate = true;
+            }
+            if (!duplicate) try selected.append(plugin);
+        }
+        if (!found) return error.UnknownPlugin;
+    }
+    return selected.toOwnedSlice();
 }
