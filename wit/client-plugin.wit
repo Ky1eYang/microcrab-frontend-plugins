@@ -89,6 +89,14 @@ world surface-fixture {
 /// Host requests complete through on-phase(event-result); no export awaits I/O.
 /// All completions echo the complete host tool_invocation identity from ctx.
 interface resources { request: func(kind: string, payload: string) -> result<u32, string>; }
+/// Translation decorates settled blocks; paid/custom POST endpoints use owner grants.
+world output-translator {
+    include plugin-exports;
+    import conversation;
+    import storage;
+    import net;
+    import resources;
+}
 world tool-plugin {
     include plugin-exports;
     export start-tool: func(request: string, ctx: string) -> string;

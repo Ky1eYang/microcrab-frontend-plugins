@@ -57,11 +57,18 @@ fn validUuid(id: []const u8) bool {
     }
     return nonzero;
 }
+fn fieldExists(values: Value, metadata: Value, key: []const u8) bool {
+    return (values == .object and values.object.contains(key)) or
+        equals(field(field(metadata, key), "visibility"), "secret");
+}
 fn permitted(values: Value, metadata: Value, descriptors: Value, key: []const u8, deleting: bool) bool {
-    if (values != .object or !values.object.contains(key)) return false;
+    if (values != .object) return false;
+    const meta = field(metadata, key);
+    if (!fieldExists(values, metadata, key)) return false;
+    if (!deleting and equals(field(meta, "visibility"), "secret")) return false;
     const descriptor = field(descriptors, key);
     if (!equals(field(descriptor, "kind"), "custom")) return false;
-    if (deleting) return truth(field(descriptor, "deletable")) and equals(field(field(metadata, key), "owner"), "client");
+    if (deleting) return truth(field(descriptor, "deletable")) and equals(field(meta, "owner"), "client");
     return truth(field(descriptor, "editable"));
 }
 fn requestId(value: Value) ?u32 {
@@ -225,7 +232,7 @@ pub const StateManager = struct {
         defer metadata.deinit();
         var descriptors = try parse(global.descriptors_json);
         defer descriptors.deinit();
-        const exists = values.value.object.contains(key);
+        const exists = fieldExists(values.value, metadata.value, key);
         const is_new_value = field(payload, "is_new");
         if (is_new_value != .null and is_new_value != .bool) return error.IsNewMustBeBoolean;
         const is_new = truth(is_new_value);
@@ -450,6 +457,57 @@ test "descriptor policy fails closed and deletion requires client ownership" {
     try std.testing.expect(permitted(values.value, metadata.value, descriptors.value, "x", false));
     try std.testing.expect(!permitted(values.value, metadata.value, descriptors.value, "x", true));
     try std.testing.expect(!permitted(values.value, metadata.value, .null, "x", false));
+}
+
+test "metadata-only Secret deletion requires exact custom descriptor and client ownership" {
+    const a = std.testing.allocator;
+    const Case = struct {
+        values: []const u8 = "{}",
+        metadata: []const u8 = "{\"TOKEN\":{\"visibility\":\"secret\",\"owner\":\"client\"}}",
+        descriptors: []const u8 = "{\"TOKEN\":{\"kind\":\"custom\",\"editable\":false,\"deletable\":true}}",
+        deleting: bool = true,
+        allowed: bool = false,
+    };
+    const cases = [_]Case{
+        .{ .allowed = true },
+        .{ .descriptors = "{\"TOKEN\":{\"kind\":\"custom\",\"editable\":false,\"deletable\":false}}" },
+        .{ .descriptors = "{\"TOKEN\":{\"kind\":\"framework\",\"deletable\":true}}" },
+        .{ .descriptors = "{}" },
+        .{ .metadata = "{\"TOKEN\":{\"visibility\":\"secret\",\"owner\":\"agent\"}}" },
+        .{ .metadata = "{\"TOKEN\":{\"visibility\":\"secret\"}}" },
+        .{ .metadata = "{\"TOKEN\":{\"visibility\":\"visible\",\"owner\":\"client\"}}" },
+        .{ .metadata = "{\"TOKEN\":{\"visibility\":\"invisible\",\"owner\":\"client\"}}" },
+        .{ .metadata = "{}" },
+        .{ .deleting = false },
+        .{ .deleting = false, .descriptors = "{\"TOKEN\":{\"kind\":\"custom\",\"editable\":true,\"deletable\":true}}" },
+        .{ .values = "null" },
+        .{ .values = "{\"TOKEN\":\"{{secret:TOKEN}}\"}", .allowed = true },
+        .{ .values = "{\"TOKEN\":\"{{secret:TOKEN}}\"}", .deleting = false, .descriptors = "{\"TOKEN\":{\"kind\":\"custom\",\"editable\":true,\"deletable\":true}}" },
+        .{ .values = "{\"TOKEN\":1}", .metadata = "{\"TOKEN\":{\"visibility\":\"visible\",\"owner\":\"client\"}}", .allowed = true },
+    };
+    for (cases) |case| {
+        var values = try parseWithAllocator(a, case.values);
+        defer values.deinit();
+        var metadata = try parseWithAllocator(a, case.metadata);
+        defer metadata.deinit();
+        var descriptors = try parseWithAllocator(a, case.descriptors);
+        defer descriptors.deinit();
+        try std.testing.expectEqual(case.allowed, permitted(values.value, metadata.value, descriptors.value, "TOKEN", case.deleting));
+        try std.testing.expect(!fieldExists(values.value, metadata.value, "OTHER"));
+        try std.testing.expect(!permitted(values.value, metadata.value, descriptors.value, "OTHER", case.deleting));
+    }
+}
+
+test "new variable collision checks include omitted Secret names" {
+    const a = std.testing.allocator;
+    var values = try parseWithAllocator(a, "{\"PUBLIC\":0}");
+    defer values.deinit();
+    var metadata = try parseWithAllocator(a, "{\"TOKEN\":{\"visibility\":\"secret\"},\"MISSING\":{\"visibility\":\"visible\"}}");
+    defer metadata.deinit();
+    try std.testing.expect(fieldExists(values.value, metadata.value, "TOKEN"));
+    try std.testing.expect(fieldExists(values.value, metadata.value, "PUBLIC"));
+    try std.testing.expect(!fieldExists(values.value, metadata.value, "MISSING"));
+    try std.testing.expect(!fieldExists(values.value, metadata.value, "NEW"));
 }
 
 test "canonical dynamic parser rejects nested duplicate keys and trailing JSON" {

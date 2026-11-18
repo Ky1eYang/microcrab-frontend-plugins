@@ -1,0 +1,21 @@
+<style>
+/* CSS will be embedded here */
+</style>
+<main data-testid="translator-sidebar">
+  <header><h1 data-i18n="title">翻译控制</h1><p data-i18n="intro">在回复完成后翻译，保留原文。</p></header>
+  <form id="control-form">
+    <div class="languages"><label><span data-i18n="source">源语言</span><select id="source"></select></label><button id="swap" type="button" data-i18n="swap">交换</button><label><span data-i18n="target">目标语言</span><select id="target"></select></label></div>
+    <label><span data-i18n="provider">翻译引擎</span><select id="provider"></select></label>
+    <label class="check"><input id="auto_translate" type="checkbox"><span data-i18n="auto">自动翻译已完成的内容</span></label>
+    <label><span data-i18n="display">显示格式</span><select id="display_mode"><option value="inline" data-i18n="inline">译文</option><option value="after" data-i18n="after">原文+译文</option></select></label>
+    <label class="check"><input id="assistant_only" type="checkbox" aria-describedby="assistant-hint"><span data-i18n="assistant">仅翻译助手回复</span></label>
+    <p id="assistant-hint" class="hint" data-i18n="assistantHint">默认开启。关闭后也会翻译已完成的用户文本，并在原文后追加译文卡片；不会替换输入、重新发送消息或修改历史。工具和推理内容仍不翻译。</p>
+    <label class="check"><input id="skip_same_language" type="checkbox"><span data-i18n="skip">高置信度同语言时跳过翻译</span></label>
+    <button id="apply" type="button" data-i18n="apply">应用</button>
+  </form>
+  <p id="feedback" class="notice" role="status" aria-live="polite" hidden></p>
+  <section aria-labelledby="metrics-title"><h2 data-i18n="metrics" id="metrics-title">本次会话</h2><dl><div><dt data-i18n="count">已翻译内容</dt><dd id="translated">—</dd></div><div><dt data-i18n="duration">平均总耗时</dt><dd id="average">—</dd></div></dl><button id="purge" type="button" data-i18n="purge">清空会话翻译缓存</button></section>
+</main>
+<script>
+/* JS will be embedded here */
+</script>

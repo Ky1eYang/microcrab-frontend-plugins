@@ -1,0 +1,36 @@
+<style>
+/* CSS will be embedded here */
+</style>
+<main data-testid="translator-settings">
+  <header><h1 data-i18n="title">输出翻译</h1><p data-i18n="intro">管理翻译引擎及连接配置。</p></header>
+  <form id="settings-form" autocomplete="off">
+    <label><span data-i18n="provider">翻译引擎</span><select id="provider" data-field="provider"><option value="google">Google GTX</option><option value="mymemory">MyMemory</option><option value="siliconflow">SiliconFlow AI</option><option value="custom" data-i18n="custom">自定义兼容接口</option></select></label>
+    <p id="readiness" class="hint" role="status"></p>
+    <section id="engine-fields" hidden>
+      <label><span data-i18n="endpoint">接口地址</span><input id="endpoint" data-field="endpoint" type="url" maxlength="2048" spellcheck="false"></label>
+      <label><span data-i18n="model">模型</span><input id="model" data-field="model" type="text" maxlength="256" spellcheck="false"></label>
+      <label><span data-i18n="key">新 API 密钥</span><input id="api-key" type="password" autocomplete="new-password" spellcheck="false" maxlength="8192" aria-describedby="key-hint"></label>
+      <p id="key-hint" class="hint" data-i18n="keyHint">留空保留已保存密钥。密钥仅随明确保存发送，提交后立即清空，不会回显。</p>
+      <label class="check"><input id="clear-key" type="checkbox"><span data-i18n="clearKey">清除已保存密钥</span></label>
+      <p id="key-link" class="hint">https://cloud.siliconflow.cn/account/ak</p>
+      <details><summary data-i18n="advanced">高级参数</summary><label><span data-i18n="temperature">温度（0–1.5）</span><input id="temperature" data-field="temperature" type="number" min="0" max="1.5" step="0.1"></label><label><span data-i18n="prompt">系统提示词</span><textarea id="prompt" data-field="prompt" rows="6" maxlength="2048" spellcheck="false"></textarea></label><p class="hint" data-i18n="promptHint">使用 {targetLang} 表示目标语言。</p></details>
+    </section>
+    <section aria-labelledby="behavior-title">
+      <h2 id="behavior-title" data-i18n="behavior">翻译行为</h2>
+      <label class="check"><input id="auto_translate" data-field="auto_translate" type="checkbox"><span data-i18n="auto">自动翻译已完成的内容</span></label>
+      <label><span data-i18n="display">显示格式</span><select id="display_mode" data-field="display_mode"><option value="inline" data-i18n="inline">译文</option><option value="after" data-i18n="after">原文+译文</option></select></label>
+      <label class="check"><input id="assistant_only" data-field="assistant_only" type="checkbox" aria-describedby="assistant-hint"><span data-i18n="assistant">仅翻译助手回复</span></label>
+      <p id="assistant-hint" class="hint" data-i18n="assistantHint">默认开启。关闭后也会翻译已完成的用户文本，并在原文后追加译文卡片；不会替换输入、重新发送消息或修改历史。工具和推理内容仍不翻译。</p>
+      <label class="check"><input id="skip_same_language" data-field="skip_same_language" type="checkbox"><span data-i18n="skip">高置信度同语言时跳过翻译</span></label>
+    </section>
+    <p id="draft-status" class="hint" role="status"></p>
+    <p id="local-error" class="notice" role="alert" hidden></p>
+    <div class="actions"><button id="save" class="primary" type="button" data-i18n="save">保存配置</button><button id="test" type="button" data-i18n="test">测试已保存配置</button><button id="reset" type="button" data-i18n="reset">放弃修改</button></div>
+  </form>
+  <p id="host-status" class="notice" role="status" aria-live="polite" hidden></p>
+  <p id="test-status" class="hint" role="status" aria-live="polite"></p>
+  <p class="hint" data-i18n="timing">测试仅显示实际总耗时。</p>
+</main>
+<script>
+/* JS will be embedded here */
+</script>

@@ -2,6 +2,7 @@ const std = @import("std");
 const helpers = @import("shared/src/build_helpers.zig");
 const state_viewer = @import("plugins/state-viewer/build.zig");
 const mcp_bridge = @import("plugins/mcp-bridge/build.zig");
+const translator = @import("plugins/output-translator/build.zig");
 
 pub fn build(b: *std.Build) void {
     const optimize: std.builtin.OptimizeMode = b.option(std.builtin.OptimizeMode, "optimize", "Guest optimization mode (default ReleaseSmall)") orelse switch (b.release_mode) {
@@ -20,6 +21,7 @@ pub fn build(b: *std.Build) void {
     const plugins = [_]helpers.PluginArtifacts{
         state_viewer.register(b, context),
         mcp_bridge.register(b, context),
+        translator.register(b, context),
     };
     const selection = b.option([]const u8, "plugins", "Comma-separated aggregate plugin selection (default all)");
     const install_directory = b.option([]const u8, "install-dir", "Override browser installation destinations with this directory");
@@ -31,7 +33,7 @@ pub fn build(b: *std.Build) void {
         }
     }
     const selected = selectPlugins(b.allocator, &plugins, selection) catch |err| {
-        std.log.err("invalid plugins selection: {s}; expected state-viewer,mcp-bridge", .{@errorName(err)});
+        std.log.err("invalid plugins selection: {s}; expected state-viewer,mcp-bridge,output-translator", .{@errorName(err)});
         b.invalid_user_input = true;
         return;
     };

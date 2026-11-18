@@ -19,6 +19,8 @@
     refresh: () => isZh() ? "刷新" : "Refresh",
     newField: () => isZh() ? "+ 新建变量" : "+ New Variable",
     readOnly: () => isZh() ? "只读受保护" : "Read Only",
+    secret: () => isZh() ? "机密" : "Secret",
+    secretValue: () => isZh() ? "机密值不可读取" : "Secret value is not readable",
     editTitle: (can) => can ? (isZh() ? "编辑此变量" : "Edit variable") : (isZh() ? "此变量受保护，无编辑权限 (缺少 client 授权)" : "Protected variable (missing client edit permission)"),
     deleteTitle: (can) => can ? (isZh() ? "删除此变量" : "Delete variable") : (isZh() ? "此变量非客户端所有 (Owner 不是 client)，无法删除" : "Variable not owned by client (cannot delete)"),
     save: () => isZh() ? "保存变更" : "Save Changes",
@@ -64,8 +66,12 @@
   let submittedOperation = null;
   const busy = () => ["pending", "saving", "queued", "unknown"].includes(state.mutation_status);
 
+  function isSecret(key) {
+    return state.metadata?.[key]?.visibility === "secret";
+  }
+
   function canEdit(key) {
-    return state.descriptors?.[key]?.kind === "custom" && state.descriptors[key].editable === true;
+    return !isSecret(key) && state.descriptors?.[key]?.kind === "custom" && state.descriptors[key].editable === true;
   }
 
   function canDelete(key) {
@@ -95,7 +101,10 @@
     el.btnInvisible.classList.toggle("active", Boolean(state.show_invisible));
     el.btnInvisible.title = state.show_invisible ? i18n.hideInvisible() : i18n.showInvisible();
 
-    const allKeys = Object.keys(state.values || {}).sort();
+    const allKeys = [...new Set([
+      ...Object.keys(state.values || {}),
+      ...Object.keys(state.metadata || {}).filter(isSecret)
+    ])].sort();
 
     // 1. If currently loading and no snapshot exists yet
     if (state.loading && !state.has_snapshot && allKeys.length === 0) {
@@ -132,6 +141,7 @@
       if (isInvisible && !state.show_invisible) return false;
 
       if (!query) return true;
+      if (isSecret(k)) return k.toLowerCase().includes(query);
       const valStr = JSON.stringify(state.values[k] || "").toLowerCase();
       return k.toLowerCase().includes(query) || valStr.includes(query);
     });
@@ -156,13 +166,14 @@
 
     let html = "";
     for (const key of matchedKeys) {
-      const val = state.values[key];
+      const secret = isSecret(key);
+      const val = secret ? undefined : state.values[key];
       const meta = (state.metadata && state.metadata[key]) || {};
       const editable = canEdit(key);
       const deletable = canDelete(key);
 
-      const valFormatted = typeof val === "object" ? JSON.stringify(val, null, 2) : String(val);
-      const type = Array.isArray(val) ? "array" : typeof val;
+      const valFormatted = secret ? i18n.secretValue() : typeof val === "object" ? JSON.stringify(val, null, 2) : String(val);
+      const type = secret ? i18n.secret() : Array.isArray(val) ? "array" : typeof val;
 
       const isInvisible = Boolean(meta.visibility === "invisible");
       const isPersisted = Boolean(meta.persistence === "persisted");
@@ -178,7 +189,7 @@
               <span style="font-size:10px;color:var(--text-sub);">(${type})</span>
             </div>
             <div class="card-badges">
-              ${isInvisible ? `<span class="badge badge-invisible">Invisible</span>` : `<span class="badge badge-visible">Visible</span>`}
+              ${secret ? `<span class="badge badge-invisible">${i18n.secret()}</span>` : isInvisible ? `<span class="badge badge-invisible">Invisible</span>` : `<span class="badge badge-visible">Visible</span>`}
               ${isPersisted ? `<span class="badge badge-persisted">Persisted</span>` : ""}
               ${!editable ? `<span class="badge badge-locked">🔒 ${i18n.readOnly()}</span>` : ""}
             </div>
@@ -271,6 +282,10 @@
       el.modalAlert.textContent = isZh() ? "变量名不可为空" : "Variable name cannot be empty";
       return;
     }
+    if (isSecret(key) || (!isCreatingNew && !canEdit(activeEditKey))) {
+      el.modalAlert.textContent = i18n.cannotEditReadOnly();
+      return;
+    }
 
     let parsedVal;
     try {
@@ -314,7 +329,7 @@
   }
 
   function confirmDelete() {
-    if (busy() || capturedSession !== state.session_id || !pendingDeleteKey) return;
+    if (busy() || capturedSession !== state.session_id || !pendingDeleteKey || !canDelete(pendingDeleteKey)) return;
     if (!capturedWitness || typeof crypto?.randomUUID !== "function" || !window.microcrab?.action) return;
     submittedOperation = crypto.randomUUID();
     state.mutation_status = "saving";
@@ -366,6 +381,10 @@
       if (next && typeof next === "object") {
         const previousSession = state.session_id;
         state = { ...state, ...next };
+        if (activeEditKey !== null && isSecret(activeEditKey)) {
+          el.modalVal.value = "";
+          closeEditModal();
+        }
         if (previousSession && previousSession !== state.session_id) {
           closeEditModal();
           closeDeleteModal();
