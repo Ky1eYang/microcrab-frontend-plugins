@@ -78,8 +78,9 @@ disabled until a matching terminal receipt.
 Chinese is the default. `locale` starting with `en` selects the English dictionary.
 Run `node --test plugins/output-translator/ui/tests.cjs` from the repository root
 for authored-script checks of field order, localization, full-save receipts and
-custom model preservation; native `zig build output-translator-test` also checks
-actual HTML content and configuration compatibility.
+custom model preservation. Native `zig build output-translator-test` from the
+repository root, or `zig build test` from the Output Translator package directory,
+also checks actual HTML content and configuration compatibility.
 
 ## Canonical assistant variants
 

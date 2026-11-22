@@ -1,10 +1,30 @@
-//! Build-time utilities. Plugin registrations receive the root Build; no standalone package entry is exposed.
+//! Build-time utilities shared by the aggregate root and standalone plugin entries.
 const std = @import("std");
 
 pub const Context = struct {
     shared: *std.Build.Module,
     bundler: *std.Build.Step.Compile,
+    wit: std.Build.LazyPath,
     optimize: std.builtin.OptimizeMode,
+
+    pub fn init(b: *std.Build) Context {
+        const optimize: std.builtin.OptimizeMode = b.option(std.builtin.OptimizeMode, "optimize", "Guest optimization mode (default ReleaseSmall)") orelse switch (b.release_mode) {
+            .fast => .ReleaseFast,
+            .safe => .ReleaseSafe,
+            .off, .any, .small => .ReleaseSmall,
+        };
+        return .{
+            .shared = b.dependency("shared", .{}).module("shared"),
+            .bundler = b.addExecutable(.{
+                .name = "bundle_ui",
+                .root_source_file = b.dependency("tools", .{}).path("bundle.zig"),
+                .target = b.host,
+                .optimize = .Debug,
+            }),
+            .wit = b.dependency("wit", .{}).path("client-plugin.wit"),
+            .optimize = optimize,
+        };
+    }
 };
 pub const Surface = struct { field: []const u8, directory: []const u8 };
 pub const PluginDefinition = struct {
@@ -26,14 +46,26 @@ pub const PluginArtifacts = struct {
     test_step: *std.Build.Step,
 };
 
-pub fn buildPlugin(b: *std.Build, ctx: Context, def: PluginDefinition) PluginArtifacts {
+pub fn buildStandalone(b: *std.Build, comptime plugin: type) void {
+    const context = Context.init(b);
+    const artifacts = plugin.register(b, context, b.path(""));
+    addStandaloneSteps(b, artifacts.component_step, artifacts.test_step);
+}
+
+pub fn addStandaloneSteps(b: *std.Build, component_step: *std.Build.Step, test_step: *std.Build.Step) void {
+    b.getInstallStep().dependOn(component_step);
+    b.step("component", "Build and validate this WIT Component").dependOn(component_step);
+    b.step("test", "Run this plugin's native tests").dependOn(test_step);
+}
+
+pub fn buildPlugin(b: *std.Build, ctx: Context, package: std.Build.LazyPath, def: PluginDefinition) PluginArtifacts {
     const assets = b.addWriteFiles();
     var asset_source = std.ArrayList(u8).init(b.allocator);
     for (def.surfaces) |surface| {
         const bundle = b.addRunArtifact(ctx.bundler);
-        bundle.addFileArg(b.path(b.fmt("{s}/index.html", .{surface.directory})));
-        bundle.addFileArg(b.path(b.fmt("{s}/style.css", .{surface.directory})));
-        bundle.addFileArg(b.path(b.fmt("{s}/app.js", .{surface.directory})));
+        bundle.addFileArg(package.path(b, b.fmt("{s}/index.html", .{surface.directory})));
+        bundle.addFileArg(package.path(b, b.fmt("{s}/style.css", .{surface.directory})));
+        bundle.addFileArg(package.path(b, b.fmt("{s}/app.js", .{surface.directory})));
         const filename = b.fmt("{s}.html", .{surface.field});
         _ = assets.addCopyFile(bundle.addOutputFileArg(filename), filename);
         asset_source.writer().print("pub const {s} = @embedFile(\"{s}\");\n", .{ surface.field, filename }) catch @panic("out of memory");
@@ -41,7 +73,7 @@ pub fn buildPlugin(b: *std.Build, ctx: Context, def: PluginDefinition) PluginArt
     const ui = b.createModule(.{ .root_source_file = assets.add("ui_assets.zig", asset_source.items) });
     const wasm = b.addExecutable(.{
         .name = def.stem,
-        .root_source_file = b.path(def.root_source),
+        .root_source_file = package.path(b, def.root_source),
         .target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding }),
         .optimize = ctx.optimize,
     });
@@ -51,7 +83,7 @@ pub fn buildPlugin(b: *std.Build, ctx: Context, def: PluginDefinition) PluginArt
     wasm.root_module.addImport("ui_assets", ui);
 
     const embed = b.addSystemCommand(&.{ "wasm-tools", "component", "embed" });
-    embed.addDirectoryArg(b.path("wit"));
+    embed.addFileArg(ctx.wit);
     embed.addArgs(&.{ "-w", def.world });
     embed.addFileArg(wasm.getEmittedBin());
     embed.addArg("-o");
@@ -76,14 +108,7 @@ pub fn buildPlugin(b: *std.Build, ctx: Context, def: PluginDefinition) PluginArt
     const diagnostic = b.step(b.fmt("{s}-core", .{def.slug}), "Install diagnostic Core module (not a distributable Component)");
     const diagnostic_file = b.addInstallFileWithDir(wasm.getEmittedBin(), .prefix, b.fmt("diagnostics/{s}.core.wasm", .{def.stem}));
     diagnostic.dependOn(&diagnostic_file.step);
-    const native_tests = b.addTest(.{
-        .root_source_file = b.path(def.test_source),
-        .target = b.host,
-        .optimize = .Debug,
-    });
-    native_tests.root_module.addImport("shared", ctx.shared);
-    const test_step = b.step(b.fmt("{s}-test", .{def.slug}), b.fmt("Run native {s} tests", .{def.slug}));
-    test_step.dependOn(&b.addRunArtifact(native_tests).step);
+    const test_step = addNativeTests(b, ctx, package, def);
     return .{
         .slug = def.slug,
         .id = def.id,
@@ -92,6 +117,20 @@ pub fn buildPlugin(b: *std.Build, ctx: Context, def: PluginDefinition) PluginArt
         .component_step = step,
         .test_step = test_step,
     };
+}
+
+pub fn addNativeTests(b: *std.Build, ctx: Context, package: std.Build.LazyPath, def: PluginDefinition) *std.Build.Step {
+    const native_tests = b.addTest(.{
+        .root_source_file = package.path(b, def.test_source),
+        .target = b.host,
+        .optimize = .Debug,
+    });
+    native_tests.root_module.addImport("shared", ctx.shared);
+    const test_step = b.step(b.fmt("{s}-test", .{def.slug}), b.fmt("Run native {s} tests", .{def.slug}));
+    const run_tests = b.addRunArtifact(native_tests);
+    run_tests.setCwd(package);
+    test_step.dependOn(&run_tests.step);
+    return test_step;
 }
 
 pub fn addFrontendInstall(b: *std.Build, installer: *std.Build.Step.Compile, name: []const u8, plugins: []const PluginArtifacts, destination: ?[]const u8) void {

@@ -1,0 +1,17 @@
+<style>/* CSS will be embedded here */</style>
+<main>
+  <h2>Prompt Redactor</h2>
+  <p id="guidance">Scan pasted text locally. This misses some secrets: review the entire preview before copying. Nothing is applied to the session.</p>
+  <label for="source">Text to scan (up to 8 KiB)</label>
+  <textarea id="source" rows="7" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" aria-describedby="guidance"></textarea>
+  <div class="controls">
+    <button id="scan" type="button" disabled>Scan and clear input</button>
+    <button id="clear" type="button">Clear</button>
+  </div>
+  <p id="status" role="status" aria-live="polite"></p>
+  <section id="result" hidden aria-label="Redacted preview">
+    <pre id="preview" tabindex="0"></pre>
+    <button id="copy" type="button" disabled>Copy reviewed preview</button>
+  </section>
+</main>
+<script>/* JS will be embedded here */</script>

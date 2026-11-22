@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   const api = window.microcrab, $ = (id) => document.getElementById(id);
-  let state = {}, config = { provider: "google", source: "auto", target: "zh-CN", model: "", temperature: 0.3, prompt: "", auto_translate: true, assistant_only: true, display_mode: "inline", skip_same_language: true }, dirty = new Set(), operation = "", sequence = 0;
+  let state = {}, config = { provider: "google", source: "auto", target: "zh-CN", model: "", temperature: 0.3, prompt: "", auto_translate: false, assistant_only: true, display_mode: "inline", skip_same_language: true }, dirty = new Set(), operation = "", sequence = 0;
   const operationPrefix = "ui-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
   const words = {
     "zh-CN": { display: "显示格式", inline: "译文", after: "原文+译文", behavior: "翻译行为", auto: "自动翻译已完成的内容", assistant: "仅翻译助手回复", assistantHint: "默认开启。关闭后也会翻译已完成的用户文本，并在原文后追加译文卡片；不会替换输入、重新发送消息或修改历史。工具和推理内容仍不翻译。", skip: "高置信度同语言时跳过翻译", title: "输出翻译", intro: "管理翻译引擎及连接配置。", provider: "翻译引擎", custom: "自定义兼容接口", endpoint: "接口地址", model: "模型", key: "新 API 密钥", keyHint: "留空保留已保存密钥。密钥仅随明确保存发送，提交后立即清空，不会回显。", clearKey: "清除已保存密钥", advanced: "高级参数", temperature: "温度（0–1.5）", prompt: "系统提示词", promptHint: "使用 {targetLang} 表示目标语言。", save: "保存配置", test: "测试已保存配置", reset: "放弃修改", timing: "测试仅显示实际总耗时。", ready: "已就绪", missing: "需要保存接口配置及授权", draft: "有未保存的修改", pending: "正在等待保存确认…", unknown: "保存结果尚未确认，请保留此页面，不要重复提交。", applied: "配置已保存", invalid: "请输入完整 HTTP(S) 地址，且不要在地址中包含凭据。", unavailable: "无法提交，请重新打开此页面。" },

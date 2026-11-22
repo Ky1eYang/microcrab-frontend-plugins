@@ -1,0 +1,6 @@
+.{
+    .name = "microcrab-frontend-plugin-tools",
+    .version = "0.4.0",
+    .minimum_zig_version = "0.13.0",
+    .paths = .{ "build.zig.zon", "bundle.zig", "install.zig" },
+}

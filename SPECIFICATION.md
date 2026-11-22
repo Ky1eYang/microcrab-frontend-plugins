@@ -43,7 +43,7 @@ flowchart TB
 2. **纯净的 Freestanding 沙箱**：编译目标严格锁定为 `wasm32-freestanding`，零外部 libc 依赖，零宿主操作系统调用，杜绝非受控 WASI 适配层；
 3. **安全隔离的 Webview-HTML 方案**：采用内联离线打包的 `webview-html` 渲染模型，彻底替代脆弱的远端脚本或静态 AST 树；
 4. **强健的 TigerStyle 安全哲学**：遵循 **Safety > Performance > Developer Experience** 优先级，显式资源管理与有界计算；
-5. **高度可扩展的模块化架构**：各插件通过根构建文件统一注册，通用基础设施抽象至 `shared` 库。
+5. **Extensible package layout:** Each plugin is a Zig package with a standalone build entry. The root aggregates the same plugin registrations; common build and guest code lives in `shared/`.
 
 ---
 
@@ -273,7 +273,7 @@ WIT 中的 `view-target` 枚举定义为：
       ▼  (阶段 1: zig build-exe -target wasm32-freestanding)
 <stem>.wasm (构建缓存中的核心模块)
       │
-      ▼  (阶段 2: wasm-tools component embed wit/ -w <world> <core-wasm> -o <embedded-wasm>)
+      ▼  (阶段 2: wasm-tools component embed wit/client-plugin.wit -w <world> <core-wasm> -o <embedded-wasm>)
 <stem>.embedded.wasm (嵌入 WIT 类型世界的 Wasm 模块)
       │
       ▼  (阶段 3: wasm-tools component new)
@@ -316,10 +316,35 @@ sequenceDiagram
     participant Host as Frontend Runtime
 
     Dev->>Repo: 1. 创建 Zig 入口和测试入口，按需添加 UI 资产
-    Dev->>Repo: 2. 编写 plugins/<slug>/build.zig (导出 register 函数)
-    Dev->>Build: 3. 在根 build.zig 中导入并追加注册项
-    Dev->>Build: 4. 执行 zig build test && zig build component 验证
+    Dev->>Repo: 2. Add build.zig.zon, standalone build, and one registration
+    Dev->>Build: 3. Add the registration to the aggregate root
+    Dev->>Build: 4. Verify native tests and Components at both build entries
     Dev->>Host: 5. 经确认后执行 zig build install-<slug> 发布安装
 ```
 
-所有新插件必须通过原生单元测试与 `wasm-tools validate` 校验，组件构建还必须能提取 WIT 接口。
+### 7.1 Package and verification contract
+
+- Create `plugins/<slug>/build.zig.zon` with the Zig 0.13.0 minimum, package
+  inputs, and local `shared`, `tools`, and `wit` dependencies. A plugin directory
+  needs the rest of the checkout; it is not a detached build distribution.
+- Keep guest source, native tests, and UI paths relative to the plugin directory.
+  Its `build.zig` exposes a thin standalone entry and one registration containing
+  the slug, artifact stem, canonical ID, WIT world, entrypoints, UI surfaces, and
+  default enablement. Register it at the aggregate root without duplicating these
+  settings. Both entries use the same WIT mirror and Component pipeline.
+- Verify `zig build`, `zig build test`, and `zig build component` from the plugin
+  directory and verify the aggregate entry at the repository root. Each Component
+  must pass `wasm-tools validate` and WIT extraction. The standalone `test` step
+  runs only the plugin's native tests; selection, installer tests, and staging
+  remain at the repository root.
+- External Speaker is explicitly selected and has no build-time origin. The
+  v0.1.20 relay candidate uses the generic method-aware Host grant for one exact
+  inbox URL. It POSTs once, then opens a GET SSE on the same endpoint only after
+  admission with a verified dialogue alias. Text chunks are fenced to that alias
+  and indexed; a terminal stream without an accepted `done` is unavailable.
+  A user action configures a grant, another sends, and an explicit user action
+  removes the Host's locally persisted bearer. Acknowledged removal is the
+  cleanup boundary; the old Host offers no auto-expiring or session-only
+  credential and never returns a stored key to the plugin. No wildcard origins,
+  redirects, cookies, WebSocket or iframe fetch are added. Inspect the constructed
+  request with a credential placeholder and the bounded browser-visible response.

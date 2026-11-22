@@ -1,0 +1,11 @@
+.{
+    .name = "microcrab-prompt-redactor",
+    .version = "0.1.0",
+    .minimum_zig_version = "0.13.0",
+    .dependencies = .{
+        .shared = .{ .path = "../../shared" },
+        .tools = .{ .path = "../../tools" },
+        .wit = .{ .path = "../../wit" },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "ui", "README.md" },
+}

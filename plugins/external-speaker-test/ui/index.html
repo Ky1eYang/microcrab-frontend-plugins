@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>External Speaker Test</title>
+  <style>/* CSS will be embedded here */</style>
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <h1 data-copy="title">External Speaker Test</h1>
+      <p class="intro" data-copy="intro"></p>
+      <p class="notice" data-copy="warning"></p>
+      <dl class="destination">
+        <div><dt data-copy="server"></dt><dd id="origin">—</dd></div>
+        <div><dt data-copy="session"></dt><dd id="session">—</dd></div>
+      </dl>
+    </header>
+
+    <section id="connections" class="connections" aria-labelledby="connections-title" hidden>
+      <h2 id="connections-title" data-copy="connections"></h2>
+      <div class="field">
+        <label for="destination" data-copy="destination"></label>
+        <select id="destination" name="destination" aria-describedby="destination-help connection-endpoint">
+          <option value="" data-copy="liveDestination"></option>
+        </select>
+        <p id="destination-help" class="hint" data-copy="destinationHelp"></p>
+        <p id="connection-endpoint" class="endpoint" hidden></p>
+      </div>
+      <p id="credential-advisory" class="notice" data-copy="credentialAdvisory"></p>
+      <div id="credential-entry" class="field" hidden>
+        <label for="token" data-copy="token"></label>
+        <input id="token" type="password" maxlength="128" minlength="43" autocomplete="off" spellcheck="false" autocapitalize="none" autocorrect="off" required aria-invalid="false" aria-describedby="token-help">
+        <p id="token-help" class="hint" data-copy="tokenHelp"></p>
+        <p id="token-error" class="error" hidden></p>
+      </div>
+      <div class="actions">
+        <button type="button" id="authorize" aria-describedby="credential-advisory" data-copy="authorize" hidden></button>
+        <button type="button" id="revoke" aria-describedby="credential-advisory" data-copy="revoke" hidden></button>
+        <button type="button" id="remove-connection" data-copy="removeConnection" hidden></button>
+        <button type="button" id="refresh-connections" data-copy="refreshConnections"></button>
+      </div>
+      <p id="connection-status" class="hint" role="status"></p>
+      <details id="add-connection-panel">
+        <summary id="add-connection-summary" data-copy="newConnection"></summary>
+        <form id="add-connection-form" class="advanced-body" aria-labelledby="add-connection-summary" method="post" autocomplete="off" novalidate>
+          <div class="field">
+            <label for="connection-name" data-copy="connectionName"></label>
+            <input id="connection-name" name="name" required maxlength="96" aria-invalid="false" aria-describedby="connection-name-help">
+            <p id="connection-name-help" class="hint" data-copy="connectionNameHelp"></p>
+            <p id="connection-name-error" class="error" hidden></p>
+          </div>
+          <div class="field">
+            <label for="endpoint" data-copy="endpoint"></label>
+            <input id="endpoint" name="endpoint" type="url" required maxlength="460" aria-invalid="false" aria-describedby="endpoint-help" autocapitalize="none" autocorrect="off" spellcheck="false">
+            <p id="endpoint-help" class="hint" data-copy="endpointHelp"></p>
+            <p id="endpoint-error" class="error" hidden></p>
+          </div>
+          <div class="actions"><button type="submit" id="add-connection" data-copy="addConnection"></button></div>
+        </form>
+      </details>
+    </section>
+
+    <div class="layout">
+      <section class="compose" aria-labelledby="compose-title">
+        <h2 id="compose-title" data-copy="compose"></h2>
+        <p id="availability" class="notice" role="status"></p>
+        <form id="request" aria-labelledby="compose-title" method="post" autocomplete="off" novalidate>
+          <fieldset id="fields" disabled>
+            <legend class="sr-only" data-copy="inboxRequest"></legend>
+            <div class="field">
+              <label for="message" data-copy="message"></label>
+              <textarea id="message" name="message" rows="5" maxlength="8192" required aria-invalid="false" aria-describedby="message-help"></textarea>
+              <div class="support">
+                <p id="message-help" data-copy="messageHelp"></p>
+                <output id="length" for="message" aria-live="off"></output>
+              </div>
+              <p id="message-error" class="error" hidden></p>
+            </div>
+            <div class="actions">
+              <button type="submit" id="send" class="primary" data-copy="send"></button>
+              <button type="button" id="next-send" data-copy="nextSend" hidden></button>
+            </div>
+            <p id="send-help" class="hint" hidden></p>
+            <details id="advanced">
+              <summary data-copy="advanced"></summary>
+              <div class="advanced-body">
+                <div class="field">
+                  <label for="operation" data-copy="operation"></label>
+                  <div class="key-row">
+                    <input id="operation" name="operation" maxlength="36" spellcheck="false" autocapitalize="none" autocorrect="off" required aria-invalid="false" aria-describedby="operation-help">
+                    <button type="button" id="new-key" data-copy="newKey"></button>
+                  </div>
+                  <p id="operation-help" class="hint" data-copy="operationHelp"></p>
+                  <p id="operation-error" class="error" hidden></p>
+                </div>
+                <p id="preview-help" class="hint" data-copy="previewHelp"></p>
+                <div class="actions"><button type="button" id="preview" aria-describedby="preview-help preview-status" data-copy="preview"></button></div>
+                <section id="command" class="field" hidden>
+                  <label for="curl" data-copy="curl"></label>
+                  <textarea id="curl" readonly rows="6" spellcheck="false" aria-describedby="preview-help"></textarea>
+                  <div class="actions"><button id="copy" type="button" data-copy="copy"></button></div>
+                </section>
+                <p id="preview-status" class="hint" role="status"></p>
+                <p id="copy-status" class="hint" role="status"></p>
+              </div>
+            </details>
+          </fieldset>
+          <p id="validation-status" class="sr-only" role="status"></p>
+        </form>
+      </section>
+
+      <section class="receipt" aria-labelledby="receipt-title">
+        <h2 id="receipt-title" data-copy="receipt"></h2>
+        <div id="result" class="receipt-status" role="status" aria-atomic="true">
+          <p id="result-label" class="result-label"></p>
+          <p id="result-description"></p>
+        </div>
+        <dl id="receipt-meta" class="receipt-meta" hidden>
+          <div id="receipt-operation-row" hidden><dt data-copy="receiptOperation"></dt><dd id="receipt-operation"></dd></div>
+          <div id="receipt-ordinal-row" hidden><dt data-copy="ordinal"></dt><dd id="receipt-ordinal"></dd></div>
+          <div id="receipt-http-row" hidden><dt data-copy="http"></dt><dd id="receipt-http"></dd></div>
+        </dl>
+        <details id="request-details" hidden>
+          <summary data-copy="requestDetails"></summary>
+          <div class="advanced-body">
+            <p id="request-line" class="endpoint"></p>
+            <h3 id="request-headers-label" data-copy="requestHeaders"></h3>
+            <pre id="request-headers" aria-labelledby="request-headers-label" tabindex="0"></pre>
+            <h3 id="request-body-label" data-copy="requestBody"></h3>
+            <pre id="request-body" aria-labelledby="request-body-label" tabindex="0"></pre>
+          </div>
+        </details>
+        <section id="reply-stream" aria-labelledby="reply-heading" hidden>
+          <h3 id="reply-heading" data-copy="replyTitle"></h3>
+          <p id="reply-status" role="status"></p>
+          <ol id="reply-chunks"></ol>
+          <p id="reply-truncated" class="hint" data-copy="replyTruncated" hidden></p>
+        </section>
+        <details id="response-details" hidden>
+          <summary data-copy="responseDetails"></summary>
+          <div class="advanced-body">
+            <p id="response-status" class="endpoint"></p>
+            <h3 id="response-headers-label" data-copy="responseHeaders"></h3>
+            <pre id="response-headers" aria-labelledby="response-headers-label" tabindex="0"></pre>
+            <h3 id="response-body-label" data-copy="responseBody"></h3>
+            <p id="response-truncated" class="hint" data-copy="truncated" hidden></p>
+            <pre id="response-body" aria-labelledby="response-body-label" tabindex="0"></pre>
+          </div>
+        </details>
+      </section>
+    </div>
+  </main>
+  <script>/* JS will be embedded here */</script>
+</body>
+</html>

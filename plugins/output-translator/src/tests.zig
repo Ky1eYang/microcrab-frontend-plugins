@@ -96,6 +96,7 @@ test "settled assistant text only, four concurrent, correlated completion and st
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try e.phase(a, "settled-blocks", try block(a, 100, "reasoning", "assistant"), ctx);
     try e.phase(a, "settled-blocks", try block(a, 101, "text", "user"), ctx);
     try std.testing.expectEqual(@as(usize, 0), Mock.http);
@@ -122,6 +123,7 @@ test "128 session cap and host-truncated text never dispatched" {
     defer e.deinit();
     const ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     for (0..129) |i| try e.phase(a, "settled-blocks", try block(a, i, "text", "assistant"), ctx);
     try std.testing.expectEqual(@as(usize, 128), e.entries.items.len);
     try std.testing.expectEqual(@as(usize, 4), Mock.http);
@@ -136,6 +138,7 @@ test "settings Save requires exact storage ACK and projects no credentials" {
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try j.set(&ctx, "surface", try j.parse(a, "{\"target\":\"setting-page\"}"));
     var payload = j.object(a);
     try j.set(&payload, "operation_id", j.string("save-1"));
@@ -195,6 +198,7 @@ test "truncated input cannot be retried and repeated settlement is cached" {
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     var truncated = try block(a, 1, "text", "assistant");
     try j.set(&truncated.object.getPtr("blocks").?.array.items[0], "text_truncated", .{ .bool = true });
     try e.phase(a, "settled-blocks", truncated, ctx);
@@ -216,6 +220,7 @@ test "history replacement preserves slot indexes and rejects prior task" {
     defer e.deinit();
     const ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try e.phase(a, "settled-blocks", try block(a, 1, "text", "assistant"), ctx);
     const old = e.tasks[0].?.id;
     try e.phase(a, "settled-blocks", try block(a, 2, "text", "assistant"), ctx);
@@ -237,6 +242,7 @@ test "orphaned surface effects expire conservatively without mutation replay" {
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try e.phase(a, "settled-blocks", try block(a, 1, "text", "assistant"), ctx);
     const old = e.tasks[0].?.id;
     try j.set(&ctx, "host_monotonic_ms", .{ .integer = 15099 });
@@ -259,6 +265,32 @@ test "orphaned surface effects expire conservatively without mutation replay" {
     try std.testing.expectError(error.SaveOutcomeUnknownReloadToInspect, e.action(a, "settings.save", payload, ctx));
     try std.testing.expectEqual(@as(usize, 1), Mock.stored);
 }
+test "fresh configuration defers translation until one explicit block request" {
+    Mock.http = 0;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var e = try Engine.init(std.testing.allocator);
+    defer e.deinit();
+    var ctx = try context(a);
+    try e.initialize(a, ctx);
+    try std.testing.expect(!e.config.auto_translate);
+    // A same-language block stays deferred; selecting a translation is intentional.
+    try e.phase(a, "settled-blocks", try textBlock(a, 1, "这是已经使用目标语言的句子。"), ctx);
+    try e.phase(a, "settled-blocks", try textBlock(a, 2, "This must stay deferred."), ctx);
+    try std.testing.expectEqual(@as(usize, 0), Mock.http);
+    try j.set(&ctx, "surface", try j.parse(a, "{\"target\":\"block-slot\",\"block_id\":\"b1\"}"));
+    const action = try j.parse(a, "{\"block_id\":\"b1\"}");
+    try e.action(a, "block.retry", action, ctx);
+    try std.testing.expectError(error.TranslationAlreadyPending, e.action(a, "block.retry", action, ctx));
+    try std.testing.expectEqual(@as(usize, 1), Mock.http);
+    try e.phase(a, "event-result", try complete(a, e.tasks[0].?.id, "[[[\"译文\"]]]"), ctx);
+    try std.testing.expectEqualStrings("译文", e.entries.items[0].translation);
+    try std.testing.expect(e.entries.items[1].status == .cancelled);
+    try std.testing.expect(!e.config.auto_translate);
+    try std.testing.expectEqual(@as(usize, 1), Mock.http);
+}
+
 test "connection test uses actual whole request duration" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -267,6 +299,7 @@ test "connection test uses actual whole request duration" {
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try j.set(&ctx, "surface", try j.parse(a, "{\"target\":\"setting-page\"}"));
     try e.action(a, "test", j.object(a), ctx);
     const id = e.tasks[0].?.id;
@@ -284,6 +317,7 @@ test "LRU evicts terminal entries and emits exact removals without consuming the
     defer e.deinit();
     const ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try e.phase(a, "settled-blocks", try block(a, 0, "text", "assistant"), ctx);
     const pending = e.tasks[0].?.id;
     e.config.auto_translate = false;
@@ -317,6 +351,7 @@ test "LRU reclaims terminal content at aggregate retained budget" {
     defer e.deinit();
     const ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     e.config.auto_translate = false;
     const text = try a.alloc(u8, 16 * 1024);
     @memset(text, 'a');
@@ -382,6 +417,7 @@ test "skip before HTTP force one invocation unchanged and reset" {
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     const text = "这个接口会保留请求数据，并将网络返回内容转换为显示文本。API 的代码和链接应当保持原样，不需要重新处理。";
     const payload = try textBlock(a, 1, text);
     try e.phase(a, "settled-blocks", payload, ctx);
@@ -422,6 +458,7 @@ test "exact variant contract defaults digest and user compatibility without assi
     defer e.deinit();
     const ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     var old = try e.config.value(a);
     _ = old.object.swapRemove("display_mode");
     _ = old.object.swapRemove("skip_same_language");
@@ -469,6 +506,7 @@ test "force cannot bypass source ceilings and MyMemory 500 bytes" {
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     const oversized = try a.alloc(u8, p.input_limit + 1);
     @memset(oversized, 'a');
     try e.phase(a, "settled-blocks", try textBlock(a, 1, oversized), ctx);
@@ -494,6 +532,7 @@ test "no prose skips before HTTP and ambiguous text remains eligible" {
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try e.phase(a, "settled-blocks", try textBlock(a, 1, "```zig\nconst x = 42;\n```\n`hello world`\n12345"), ctx);
     try std.testing.expectEqual(@as(usize, 0), Mock.http);
     try std.testing.expectEqual(@import("language.zig").Reason.no_prose, e.entries.items[0].reason.?);
@@ -535,6 +574,7 @@ test "mixed Latin languages stay unknown and MyMemory manual equality can dispat
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     e.config.provider = .mymemory;
     try e.phase(a, "settled-blocks", try textBlock(a, 1, "这个接口会保留请求数据，并将网络返回内容转换为显示文本，不需要重新处理。"), ctx);
     try std.testing.expectEqual(@as(usize, 0), Mock.http);
@@ -552,6 +592,7 @@ test "host truncation emits no uncertified variant or retirement and digest spel
     defer e.deinit();
     const ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     var payload = try textBlock(a, 1, "truncated preview");
     const b = &payload.object.getPtr("blocks").?.array.items[0];
     try j.set(b, "text_truncated", .{ .bool = true });
@@ -568,6 +609,38 @@ test "host truncation emits no uncertified variant or retirement and digest spel
     try std.testing.expectError(error.InvalidSourceDigest, e.phase(a, "settled-blocks", payload, ctx));
 }
 
+test "replacing a published assistant source with empty or truncated text leaves no variant to retire" {
+    Mock.http = 0;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var e = try Engine.init(std.testing.allocator);
+    defer e.deinit();
+    const ctx = try context(a);
+    try e.initialize(a, ctx);
+    try e.phase(a, "settled-blocks", try textBlock(a, 1, "previous source"), ctx);
+    try e.phase(a, "settled-blocks", try textBlock(a, 2, "another source"), ctx);
+    const first = try e.result(a, ctx, "", true);
+    try std.testing.expectEqual(@as(usize, 2), j.get(first, "block_variants").array.items.len);
+    e.published();
+
+    var truncated = try textBlock(a, 2, "partial text");
+    try j.set(&truncated.object.getPtr("blocks").?.array.items[0], "text_truncated", .{ .bool = true });
+    try e.phase(a, "settled-blocks", truncated, ctx);
+    try e.phase(a, "settled-blocks", try textBlock(a, 1, ""), ctx);
+    const replaced = try e.result(a, ctx, "", true);
+    try std.testing.expectEqual(@as(usize, 0), j.get(replaced, "block_variants").array.items.len);
+    e.published();
+
+    for (3..131) |i| {
+        try e.phase(a, "settled-blocks", try textBlock(a, i, "new source"), ctx);
+    }
+    const evicted = try e.result(a, ctx, "", true);
+    try std.testing.expectEqual(@as(usize, 128), j.get(evicted, "block_variants").array.items.len);
+    try std.testing.expect(j.get(evicted, "remove_block_variants") == .null);
+    try std.testing.expectEqual(@as(usize, 0), Mock.http);
+}
+
 test "literal backticks adjacent URL prose and unclassified Unicode stay eligible" {
     const gate = @import("language.zig");
     const unknown: ?gate.Reason = null;
@@ -581,6 +654,7 @@ test "literal backticks adjacent URL prose and unclassified Unicode stay eligibl
         defer e.deinit();
         const ctx = try context(a);
         try e.initialize(a, ctx);
+        e.config.auto_translate = true;
         try e.phase(a, "settled-blocks", try textBlock(a, 1, text), ctx);
         try std.testing.expectEqual(@as(usize, 1), Mock.http);
     }
@@ -603,6 +677,7 @@ test "Chinese API prose excludes proven punctuation without weakening unknown Un
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     const source = "这个设置会将网络请求处理为完整的消息，并且保留原来的内容。我们应该先检查传入的数据，然后再进行翻译和显示，让所有用户都能够了解当前处理结果。API HTTP";
     try e.phase(a, "settled-blocks", try textBlock(a, 1, source), ctx);
     try std.testing.expectEqual(@as(usize, 0), Mock.http);
@@ -618,7 +693,7 @@ test "Chinese API prose excludes proven punctuation without weakening unknown Un
 test "authored settings and sidebar expose ordered compatible display controls" {
     const a = std.testing.allocator;
     for ([_][]const u8{ "settings", "sidebar" }) |surface| {
-        const path = try std.fmt.allocPrint(a, "plugins/output-translator/ui/{s}/index.html", .{surface});
+        const path = try std.fmt.allocPrint(a, "ui/{s}/index.html", .{surface});
         defer a.free(path);
         const html = try std.fs.cwd().readFileAlloc(a, path, 64 * 1024);
         defer a.free(html);
@@ -674,6 +749,7 @@ test "HTTP capacity keeps dispatch timeout through preference and config changes
     var ctx = try context(a);
     try j.set(&ctx, "host_http_timeout_ms", .{ .integer = 120000 });
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     for (0..5) |i| try e.phase(a, "settled-blocks", try block(a, i, "text", "assistant"), ctx);
     const original_id = e.tasks[0].?.id;
     try j.set(&ctx, "host_monotonic_ms", .{ .integer = 20100 });
@@ -707,6 +783,7 @@ test "default HTTP request expires at original15s despite a later longer prefere
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try e.phase(a, "settled-blocks", try block(a, 1, "text", "assistant"), ctx);
     const original_id = e.tasks[0].?.id;
     try j.set(&ctx, "host_http_timeout_ms", .{ .integer = 300000 });
@@ -732,6 +809,7 @@ test "connection test snapshots120s HTTP deadline and can complete after20s" {
     try j.set(&ctx, "host_http_timeout_ms", .{ .integer = 120000 });
     try j.set(&ctx, "surface", try j.parse(a, "{\"target\":\"setting-page\"}"));
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try e.action(a, "test", j.object(a), ctx);
     const id = e.tasks[0].?.id;
     try std.testing.expectEqual(@as(f64, 120000), e.tasks[0].?.timeout_ms);
@@ -756,6 +834,7 @@ test "trusted HTTP timeout validates integer bounds and preserves nonHTTP Save15
         var ctx = try context(a);
         try j.set(&ctx, "host_http_timeout_ms", input);
         try e.initialize(a, ctx);
+        e.config.auto_translate = true;
         try e.phase(a, "settled-blocks", try block(a, 1, "text", "assistant"), ctx);
         try std.testing.expectEqual(if (i < 8) @as(f64, 10000) else j.number(input).?, e.tasks[0].?.timeout_ms);
     }
@@ -765,6 +844,7 @@ test "trusted HTTP timeout validates integer bounds and preserves nonHTTP Save15
     try j.set(&ctx, "host_http_timeout_ms", .{ .integer = 120000 });
     try j.set(&ctx, "surface", try j.parse(a, "{\"target\":\"setting-page\"}"));
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     var payload = j.object(a);
     try j.set(&payload, "operation_id", j.string("save-long-http"));
     try j.set(&payload, "config", try e.config.value(a));
@@ -787,6 +867,7 @@ test "connection timeout keeps recognized Host cause and never echoes arbitrary 
         try j.set(&ctx, "host_http_timeout_ms", .{ .integer = 120000 });
         try j.set(&ctx, "surface", try j.parse(a, "{\"target\":\"setting-page\"}"));
         try e.initialize(a, ctx);
+        e.config.auto_translate = true;
         try e.action(a, "test", j.object(a), ctx);
         var response = j.object(a);
         try j.set(&response, "request_id", .{ .integer = e.tasks[0].?.id });
@@ -806,6 +887,7 @@ test "source replacement preserves peer translations pending work and Save gener
     defer e.deinit();
     const ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     for (0..3) |i| try e.phase(a, "settled-blocks", try block(a, i, "text", "assistant"), ctx);
     const stale = e.tasks[0].?.id;
     const peer = e.tasks[1].?.id;
@@ -833,6 +915,7 @@ test "old source timeout cannot fail the newer pending source" {
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try e.phase(a, "settled-blocks", try textBlock(a, 0, "old source"), ctx);
     try j.set(&ctx, "host_monotonic_ms", .{ .integer = 1000 });
     try e.phase(a, "settled-blocks", try textBlock(a, 0, "new source"), ctx);
@@ -852,6 +935,7 @@ test "source update during Save preserves exact storage acknowledgment" {
     defer e.deinit();
     var ctx = try context(a);
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try e.phase(a, "settled-blocks", try textBlock(a, 0, "old source"), ctx);
     try j.set(&ctx, "surface", try j.parse(a, "{\"target\":\"setting-page\"}"));
     const save = try j.parse(a, "{\"operation_id\":\"save-source-change\"}");
@@ -876,6 +960,7 @@ test "Save dispatch failures settle and unknown rejection cannot erase original 
     var ctx = try context(a);
     try j.set(&ctx, "surface", try j.parse(a, "{\"target\":\"setting-page\"}"));
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     var payload = try j.parse(a, "{\"operation_id\":\"save-rejected\"}");
     try j.set(&payload, "config", try e.config.value(a));
     Mock.reject_storage = true;
@@ -909,6 +994,7 @@ test "Host dispatch rejections release every owned error buffer" {
         Mock.reject_http = false;
     }
     try e.initialize(a, ctx);
+    e.config.auto_translate = true;
     try e.phase(a, "settled-blocks", try textBlock(a, 0, "eligible text"), ctx);
     try j.set(&ctx, "surface", try j.parse(a, "{\"target\":\"setting-page\"}"));
     try std.testing.expectError(error.ConnectionTestDispatchRejected, e.action(a, "test", j.object(a), ctx));

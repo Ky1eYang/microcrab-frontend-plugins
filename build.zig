@@ -1,29 +1,23 @@
 const std = @import("std");
-const helpers = @import("shared/src/build_helpers.zig");
+const helpers = @import("shared").helpers;
 const state_viewer = @import("plugins/state-viewer/build.zig");
 const mcp_bridge = @import("plugins/mcp-bridge/build.zig");
 const translator = @import("plugins/output-translator/build.zig");
+const prompt_redactor = @import("plugins/prompt-redactor/build.zig");
+const speaker = @import("plugins/external-speaker-test/build.zig");
 
 pub fn build(b: *std.Build) void {
-    const optimize: std.builtin.OptimizeMode = b.option(std.builtin.OptimizeMode, "optimize", "Guest optimization mode (default ReleaseSmall)") orelse switch (b.release_mode) {
-        .fast => .ReleaseFast,
-        .safe => .ReleaseSafe,
-        .off, .any, .small => .ReleaseSmall,
+    const context = helpers.Context.init(b);
+    const bundled = [_]helpers.PluginArtifacts{
+        state_viewer.register(b, context, b.path("plugins/state-viewer")),
+        mcp_bridge.register(b, context, b.path("plugins/mcp-bridge")),
+        translator.register(b, context, b.path("plugins/output-translator")),
+        prompt_redactor.register(b, context, b.path("plugins/prompt-redactor")),
     };
-    const shared = b.createModule(.{ .root_source_file = b.path("shared/src/root.zig") });
-    const bundler = b.addExecutable(.{
-        .name = "bundle_ui",
-        .root_source_file = b.path("tools/bundle.zig"),
-        .target = b.host,
-        .optimize = .Debug,
-    });
-    const context = helpers.Context{ .shared = shared, .bundler = bundler, .optimize = optimize };
-    const plugins = [_]helpers.PluginArtifacts{
-        state_viewer.register(b, context),
-        mcp_bridge.register(b, context),
-        translator.register(b, context),
+    const plugins = bundled ++ [_]helpers.PluginArtifacts{
+        speaker.register(b, context, b.path("plugins/external-speaker-test")),
     };
-    const selection = b.option([]const u8, "plugins", "Comma-separated aggregate plugin selection (default all)");
+    const selection = b.option([]const u8, "plugins", "Comma-separated aggregate selection (default builtins; opt-in plugins require explicit selection)");
     const install_directory = b.option([]const u8, "install-dir", "Override browser installation destinations with this directory");
     if (install_directory) |directory| {
         if (directory.len == 0) {
@@ -32,8 +26,8 @@ pub fn build(b: *std.Build) void {
             return;
         }
     }
-    const selected = selectPlugins(b.allocator, &plugins, selection) catch |err| {
-        std.log.err("invalid plugins selection: {s}; expected state-viewer,mcp-bridge,output-translator", .{@errorName(err)});
+    const selected = selectPlugins(b.allocator, &plugins, &bundled, selection) catch |err| {
+        std.log.err("invalid plugins selection: {s}; use comma-separated registered plugin slugs", .{@errorName(err)});
         b.invalid_user_input = true;
         return;
     };
@@ -46,19 +40,20 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(plugin.component_step);
         tests.dependOn(plugin.test_step);
     }
+    const installer_source = b.dependency("tools", .{}).path("install.zig");
     const installer = b.addExecutable(.{
         .name = "install_plugins",
-        .root_source_file = b.path("tools/install.zig"),
+        .root_source_file = installer_source,
         .target = b.host,
         .optimize = .Debug,
     });
-    installer.root_module.addImport("shared", shared);
+    installer.root_module.addImport("shared", context.shared);
     const installer_tests = b.addTest(.{
-        .root_source_file = b.path("tools/install.zig"),
+        .root_source_file = installer_source,
         .target = b.host,
         .optimize = .Debug,
     });
-    installer_tests.root_module.addImport("shared", shared);
+    installer_tests.root_module.addImport("shared", context.shared);
     const installer_test = b.step("installer-test", "Run native aggregate installer tests");
     installer_test.dependOn(&installer.step);
     installer_test.dependOn(&b.addRunArtifact(installer_tests).step);
@@ -70,8 +65,8 @@ pub fn build(b: *std.Build) void {
     }
 }
 
-fn selectPlugins(allocator: std.mem.Allocator, plugins: []const helpers.PluginArtifacts, selection: ?[]const u8) ![]const helpers.PluginArtifacts {
-    const names = selection orelse return plugins;
+fn selectPlugins(allocator: std.mem.Allocator, plugins: []const helpers.PluginArtifacts, bundled: []const helpers.PluginArtifacts, selection: ?[]const u8) ![]const helpers.PluginArtifacts {
+    const names = selection orelse return bundled;
     var selected = std.ArrayList(helpers.PluginArtifacts).init(allocator);
     var items = std.mem.splitScalar(u8, names, ',');
     while (items.next()) |name| {

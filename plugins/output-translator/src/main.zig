@@ -66,6 +66,10 @@ fn failure(err: anyerror) [*]const u8 {
     return stringResult(std.fmt.allocPrint(allocator, "{{\"schema_version\":1,\"error\":\"{s}\"}}", .{@errorName(err)}) catch @trap());
 }
 fn execute(kind: enum { init, action, phase }, name: []const u8, payload: []const u8, ctx_source: []const u8) ![*]const u8 {
+    // This plugin decorates settled history; submitting input does not advance
+    // translation work or republish cached block decorations.
+    if (kind == .phase and std.mem.eql(u8, name, "before-submit"))
+        return stringResult(try allocator.dupe(u8, "{\"schema_version\":1}"));
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = arena.allocator();

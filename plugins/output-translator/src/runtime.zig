@@ -336,6 +336,9 @@ pub fn Runtime(comptime Host: type) type {
             }
             return signature;
         }
+        fn blockedSource(b: j.Value, text: []const u8, role: []const u8) bool {
+            return j.truth(j.get(b, "text_truncated")) or (text.len == 0 and std.mem.eql(u8, role, "assistant"));
+        }
         fn entryOnce(self: *Self, b: j.Value, id: []const u8, history: []const u8, text: []const u8, role: []const u8) !Entry {
             const signature = try sourceSignature(b, text);
             const id_owned = try self.a.dupe(u8, id);
@@ -346,11 +349,14 @@ pub fn Runtime(comptime Host: type) type {
             errdefer self.a.free(source);
             const role_owned = try self.a.dupe(u8, role);
             const revision_id = self.nextAge();
-            var e = Entry{ .revision = revision_id, .age = revision_id, .blocked = j.truth(j.get(b, "text_truncated")), .signature = signature, .id = id_owned, .history = revision, .text = source, .role = role_owned, .generation = self.generation };
+            var e = Entry{ .revision = revision_id, .age = revision_id, .blocked = blockedSource(b, text, role), .signature = signature, .id = id_owned, .history = revision, .text = source, .role = role_owned, .generation = self.generation };
             if (j.truth(j.get(b, "text_truncated"))) {
                 e.status = .err;
                 e.failure = "Host text was truncated; translation refused";
                 self.status = "Original text truncated by host; translation unavailable";
+            } else if (e.blocked) {
+                e.status = .err;
+                e.failure = "Original text is empty; translation unavailable";
             } else if (text.len > providers.input_limit) {
                 e.status = .err;
                 e.failure = "Translation input exceeds 16 KiB";
@@ -383,14 +389,16 @@ pub fn Runtime(comptime Host: type) type {
                 if (found) |i| {
                     const e = &self.entries.items[i];
                     const signature = try sourceSignature(b, text);
-                    if (std.mem.eql(u8, e.history, history) and std.mem.eql(u8, e.role, role) and std.mem.eql(u8, &e.signature, &signature) and e.blocked == j.truth(j.get(b, "text_truncated"))) {
+                    if (std.mem.eql(u8, e.history, history) and std.mem.eql(u8, e.role, role) and std.mem.eql(u8, &e.signature, &signature) and e.blocked == blockedSource(b, text, role)) {
                         e.age = self.nextAge();
                         continue;
                     }
                     if (!try self.room(needed, i)) continue;
                     // Old HTTP capacity remains occupied until its receipt or captured deadline.
                     var replacement = try self.newEntry(b, id, history, text, role);
-                    replacement.fresh = e.fresh;
+                    // The Host already retired the previous assistant variant on
+                    // source replacement. An unavailable source never publishes one.
+                    replacement.fresh = e.fresh or (replacement.blocked and std.mem.eql(u8, role, "assistant"));
                     self.freeEntry(e.*);
                     e.* = replacement;
                     continue;
@@ -676,12 +684,15 @@ pub fn Runtime(comptime Host: type) type {
                         if (self.config.assistant_only and !std.mem.eql(u8, e.role, "assistant")) return error.AssistantOnlyControlEnabled;
                         if (e.status == .queued or e.status == .pending) return error.TranslationAlreadyPending;
                         if (e.text.len == 0) return error.OriginalTextUnavailable;
+                        // A manual request on a deferred block is intentional, even
+                        // when the automatic language heuristic would skip it.
+                        const force = e.status == .cancelled or std.mem.eql(u8, name, "block.force");
                         if (e.translation.len > 0) self.a.free(e.translation);
                         e.translation = "";
                         e.failure = "";
                         e.failure_len = 0;
                         e.status = .queued;
-                        e.force = std.mem.eql(u8, name, "block.force");
+                        e.force = force;
                         e.reason = null;
                         e.generation = self.generation;
                     }
@@ -796,7 +807,7 @@ pub fn Runtime(comptime Host: type) type {
             if (publish) for (self.entries.items) |*e| {
                 if (e.status == .vacant) continue;
                 if (std.mem.eql(u8, e.role, "assistant")) {
-                    // Truncated source has no certified replacement authority.
+                    // Truncated or empty source has no certified replacement authority.
                     if (e.blocked) continue;
                     try variants.array.append(try self.variantValue(a, e, locale));
                 } else {

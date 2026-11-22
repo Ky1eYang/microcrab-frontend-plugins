@@ -84,6 +84,12 @@ world surface-fixture {
     import conversation;
 }
 
+/// Visual-only network participants use the ordinary manifest-origin policy.
+world net-view {
+    include plugin-exports;
+    import net;
+}
+
 /// Optional model tool provider. Visual-only worlds do not include these exports.
 /// start-tool returns PluginResult.tool_completion pending or terminal immediately.
 /// Host requests complete through on-phase(event-result); no export awaits I/O.

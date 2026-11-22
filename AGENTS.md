@@ -30,17 +30,21 @@ architecture, ABI layouts, and runtime boundaries are in [SPECIFICATION.md](SPEC
 - **Modular Monorepo**:
   - `build.zig`: Root orchestrator. Aggregates plugin registrations, exposes `-Dplugins=...`
     and `-Dinstall-dir=...`, and manages component build, test, and install steps.
-  - `shared/`: Common reusable library (`shared.abi`, `shared.host`, `shared.json`,
-    `shared.types`, `shared.build_helpers`).
-  - `plugins/<slug>/`: Plugin package containing `build.zig`, `src/`, and UI assets
-    where applicable. The registration identifies the native unit-test entrypoint.
+  - `shared/`: Local Zig package for the common guest library (`shared.abi`, `shared.host`,
+    `shared.json`, `shared.types`) and common build helpers.
+  - `plugins/<slug>/`: Plugin package containing `build.zig.zon`, `build.zig`, `src/`, and UI
+    assets where applicable. Each manifest declares local `shared`, `tools`, and `wit`
+    dependencies. Standalone commands work in a full checkout, not in a detached directory.
   - `tools/`: Build and installation host tools (`bundle.zig` for asset bundling,
-    `install.zig` for atomic immutable installation).
-  - `wit/`: Canonical client-plugin WIT mirror.
+    `install.zig` for atomic immutable installation). Staging is a root-only build operation.
+  - `wit/`: The one client-plugin WIT mirror used by both build entries.
 - **Plugin Registration Contract**:
-  - Each plugin's `build.zig` MUST export a `register(b: *std.Build, ctx: helpers.Context) helpers.PluginArtifacts`
-    function. Plugins do not maintain standalone root builds.
-  - Plugin definitions declare slug, stem, canonical ID, WIT world, entrypoints, and UI surfaces.
+  - Each plugin's `build.zig` provides a thin standalone `build` entry and a single `register`
+    function used by both entries. The caller supplies the package path so the registration
+    can identify its source and UI inputs relative to its own directory.
+  - Plugin definitions declare slug, stem, canonical ID, WIT world, guest and native-test
+    entrypoints, UI surfaces, and any opt-out from default enablement. Preserve explicit
+    configuration requirements; do not add deployment defaults.
 
 ## Coding guidelines and TigerStyle idioms
 
@@ -112,9 +116,13 @@ Adhere strictly to TigerStyle principles: **Safety > Performance > Developer Exp
 ## Verification, testing, and release gates
 
 - **Local verification**:
-  - Run `zig build test` to execute native unit tests for the selected plugins (all by default) and the installer.
-  - Run `zig build component` (or `zig build <slug>`) to build and validate WIT Components.
-  - Ensure all generated Components pass `wasm-tools validate` and WIT interface extraction.
+  - At the repository root, run `zig build test` for selected configured plugins and the
+    installer; run `zig build component` (or `zig build <slug>`) for validated Components.
+  - From the affected plugin directories, verify `zig build`, `zig build test`, and
+    `zig build component` against the same checkout inputs. Native tests run with the
+    plugin directory as their working directory from either entry point.
+  - Ensure generated Components pass `wasm-tools validate` and WIT interface extraction.
+    Test configuration-gated plugins both with and without their required inputs.
 - **Integration with superproject**:
   - Root build and verification is orchestrated via Cargo:
     `cargo xtask wasm zig-plugins -p <slug>`. Adding `--install-dir <dir>` stages artifacts and resolves a relative path from the caller working directory.
