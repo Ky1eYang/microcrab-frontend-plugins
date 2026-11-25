@@ -2,12 +2,14 @@
   "use strict";
   const api = window.microcrab;
   const $ = (id) => document.getElementById(id);
-  let state = { locale: "zh-CN", session_id: "", has_session: false, records: [], metrics: {}, page: 0, total_records: 0, selected_id: null, detail: null };
+  let state = { locale: "zh-CN", session_id: "", has_session: false, services: [], records: [], metrics: {}, page: 0, total_records: 0, selected_id: null, detail: null };
   const dictionaries = {
     "zh-CN": {
+      servicesTitle: "已启用的服务", servicesEmpty: "没有已启用的 MCP 服务。", serviceUnchecked: "未检测", serviceChecking: "正在检查", serviceConnected: "已连接", serviceUnavailable: "不可用", tools: (n) => `${n} 个工具`, checked: (s) => `检查时间：${s}`,
       title: "工具调用记录", clear: "清空记录", retention: "仅保留当前会话最近 128 条记录；切换会话或刷新后清空。", metrics: "保留记录统计", total: "调用数", successRate: "成功率", average: "平均耗时", noSession: "打开会话后，可查看本次会话的工具调用记录。", empty: "当前没有调用记录。", previous: "上一页", next: "下一页", pagination: "调用记录分页", pending: "进行中", completed: "已完成", failed: "失败", cancelled: "已取消", unknown: "结果不确定", unknownNotice: "操作可能已产生效果。请先核实结果，再决定是否重新调用。", arguments: "参数", output: "输出", close: "收起详情", loading: "正在读取详情…", selectHint: "可直接选择下方原文。", nextChunk: "下一片段", firstChunk: "返回首片段", omitted: "当前片段仅显示部分原文。", duration: (n) => `${n} 毫秒`, turn: (n) => `轮次 ${n}`, round: (n) => `步骤 ${n}`, page: (p, count) => `第 ${p} / ${count} 页`, chunk: (start, end, total) => `原文片段 · 字节 ${start}–${end} / ${total}`, more: "后续还有内容，请读取下一片段。", unavailable: "无法提交，请重新打开此页面。"
     },
     en: {
+      servicesTitle: "Enabled services", servicesEmpty: "No enabled MCP services.", serviceUnchecked: "Not tested", serviceChecking: "Checking", serviceConnected: "Connected", serviceUnavailable: "Unavailable", tools: (n) => `${n} tools`, checked: (s) => `Checked: ${s}`,
       title: "Tool call history", clear: "Clear history", retention: "Only the latest 128 calls in this session are retained. Switching sessions or refreshing clears them.", metrics: "Retained-window metrics", total: "Calls", successRate: "Success rate", average: "Avg. duration", noSession: "Open a conversation to observe its tool calls.", empty: "No calls in the current history.", previous: "Previous page", next: "Next page", pagination: "Call history pages", pending: "Pending", completed: "Completed", failed: "Failed", cancelled: "Cancelled", unknown: "Outcome unknown", unknownNotice: "This operation may have taken effect. Verify the outcome before deciding whether to call it again.", arguments: "Arguments", output: "Output", close: "Close details", loading: "Loading details…", selectHint: "Select the original text below directly.", nextChunk: "Next chunk", firstChunk: "First chunk", omitted: "Only part of the source is shown in this chunk.", duration: (n) => `${n} ms`, turn: (n) => `Turn ${n}`, round: (n) => `Round ${n}`, page: (p, count) => `Page ${p} of ${count}`, chunk: (start, end, total) => `Source chunk · bytes ${start}–${end} of ${total}`, more: "More content follows. Read the next chunk to continue.", unavailable: "Unable to submit. Reopen this page."
     }
   };
@@ -31,9 +33,40 @@
     return element;
   }
   function inspect(id, field, offset) { action("inspect-history", { id, field, offset }); }
+  const serviceStatusLabels = new Map([
+    ["unchecked", "serviceUnchecked"], ["checking", "serviceChecking"],
+    ["connected", "serviceConnected"], ["unavailable", "serviceUnavailable"]
+  ]);
+  function renderServices() {
+    const list = $("services-list");
+    list.replaceChildren();
+    const services = Array.isArray(state.services) ? state.services : [];
+    for (const service of services.slice(0, 32)) {
+      if (typeof service?.id !== "string") continue;
+      const row = node("li", undefined, "service-row");
+      row.dataset.testid = "enabled-service-row";
+      const id = node("span", service.id, "service-id");
+      id.title = service.id;
+      const status = serviceStatusLabels.has(service.status) ? service.status : "unavailable";
+      const label = node("span", t(serviceStatusLabels.get(status)), `service-status ${status}`);
+      label.dataset.testid = "enabled-service-status";
+      row.append(id, label);
+      const parts = [];
+      if (Number.isFinite(service.tool_count)) parts.push(t("tools", new Intl.NumberFormat(language()).format(service.tool_count)));
+      if (Number.isFinite(service.checked_at_ms)) {
+        const date = new Date(service.checked_at_ms);
+        if (Number.isFinite(date.getTime())) parts.push(t("checked", date.toLocaleString(language())));
+      }
+      if (parts.length) row.append(node("span", parts.join(" · "), "service-meta"));
+      list.append(row);
+    }
+    list.hidden = !list.childElementCount;
+    $("services-empty").hidden = Boolean(list.childElementCount || state.error);
+  }
   function render() {
     document.documentElement.lang = language();
     document.querySelectorAll("[data-i18n]").forEach((element) => { element.textContent = t(element.dataset.i18n); });
+    renderServices();
     $("history-pagination").setAttribute("aria-label", t("pagination"));
     const metrics = state.metrics || {};
     $("metric-total").textContent = String(metrics.total ?? 0);

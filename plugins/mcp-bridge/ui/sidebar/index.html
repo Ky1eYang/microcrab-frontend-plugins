@@ -2,7 +2,13 @@
 /* CSS will be embedded here */
 </style>
 <main data-testid="mcp-sidebar">
-  <header class="toolbar"><h1 data-i18n="title">工具调用记录</h1><button id="clear-history" data-testid="clear-history" type="button" data-i18n="clear">清空记录</button></header>
+  <h1>MCP Bridge</h1>
+  <section class="services" aria-labelledby="services-title" data-testid="enabled-services">
+    <h2 id="services-title" data-i18n="servicesTitle">已启用的服务</h2>
+    <ul id="services-list" class="services-list" role="list" hidden></ul>
+    <p id="services-empty" class="empty" data-i18n="servicesEmpty">没有已启用的 MCP 服务。</p>
+  </section>
+  <header class="toolbar"><h2 class="history-title" data-i18n="title">工具调用记录</h2><button id="clear-history" data-testid="clear-history" type="button" data-i18n="clear">清空记录</button></header>
   <p class="hint" data-i18n="retention">仅保留当前会话最近 128 条记录；切换会话或刷新后清空。</p>
   <section aria-labelledby="metrics-title"><h2 id="metrics-title" data-i18n="metrics">保留记录统计</h2><dl class="metrics"><div><dt data-i18n="total">调用数</dt><dd id="metric-total" data-testid="metric-total">0</dd></div><div><dt data-i18n="successRate">成功率</dt><dd id="metric-success-rate" data-testid="metric-success-rate">—</dd></div><div><dt data-i18n="average">平均耗时</dt><dd id="metric-average-duration" data-testid="metric-average-duration">—</dd></div></dl></section>
   <p id="sidebar-error" class="notice danger" role="alert" hidden></p>

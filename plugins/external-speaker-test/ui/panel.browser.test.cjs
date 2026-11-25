@@ -302,6 +302,10 @@ test("zh-CN at 390px and English at 1440px fit without horizontal scroll", async
       await fill(page, "message", "中".repeat(2500));
       assert.equal(await page.title(), title);
       assert.equal(await page.locator("html").getAttribute("lang"), lang);
+      const warning = await page.locator('[data-copy="warning"]').textContent();
+      assert.match(warning, lang === "zh-CN" ? /不要在生产环境中使用/ : /not for production/);
+      assert.match(warning, lang === "zh-CN" ? /为目标会话所属的项目显式启用外部消息/ : /Explicitly enable External Messaging for the destination Project/);
+      assert.match(warning, lang === "zh-CN" ? /暂停接收外部消息和查看回复/ : /suspends incoming messages and reply observation/);
       const dimensions = await page.evaluate(() => ({
         scroll: document.documentElement.scrollWidth,
         client: document.documentElement.clientWidth,

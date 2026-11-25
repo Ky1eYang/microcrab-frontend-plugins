@@ -1,7 +1,8 @@
 const std = @import("std");
 const shared = @import("shared");
 const j = @import("json_helpers.zig");
-const Engine = @import("runtime.zig").Runtime(shared.host);
+const engine_module = @import("runtime.zig");
+const Engine = engine_module.Runtime(shared.host);
 const allocator = shared.abi.allocator;
 pub const cabi_realloc = shared.abi.cabi_realloc;
 const assets = @import("ui_assets");
@@ -16,7 +17,7 @@ var manifest_buffer: [56]u8 align(4) = undefined;
 export fn manifest() [*]const u8 {
     var stream = std.io.fixedBufferStream(&manifest_buffer);
     const writer = stream.writer();
-    inline for (.{ "microcrab.mcp-bridge", "MCP bridge", "0.4.0" }) |text| {
+    inline for (.{ "microcrab.mcp-bridge", "MCP bridge", engine_module.guest_version }) |text| {
         writer.writeInt(u32, @intFromPtr(text.ptr), .little) catch unreachable;
         writer.writeInt(u32, text.len, .little) catch unreachable;
     }

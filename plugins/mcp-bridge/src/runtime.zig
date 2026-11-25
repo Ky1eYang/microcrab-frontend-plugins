@@ -9,6 +9,8 @@ const max_operations = 32;
 const max_history = 128;
 const history_byte_limit = 2 * 1024 * 1024;
 const operation_byte_limit = 16 * 1024 * 1024;
+const max_configured_servers = 32;
+pub const guest_version = "0.4.1";
 
 /// Counts the arena backing allocations, including retained parsing/catalog data.
 /// A failed admission frees the operation; it never partially executes a remote call.
@@ -207,24 +209,49 @@ pub fn Runtime(comptime Host: type) type {
             try self.queueConfig("resource-list", j.object(a), a);
             return self.result(a, null);
         }
-        fn configured(servers: V, id: []const u8) bool {
-            if (servers != .array) return false;
-            for (servers.array.items) |server| if (j.is(j.get(server, "id"), id)) return true;
-            return false;
+        fn configured(servers: V, id: []const u8) V {
+            if (servers != .array or servers.array.items.len > max_configured_servers) return .null;
+            for (servers.array.items) |server| if (j.is(j.get(server, "id"), id)) return server;
+            return .null;
         }
-        fn filteredHealth(self: *Self, a: A, servers: V) !V {
+        fn serviceEnabled(server: V) bool {
+            return j.truth(j.get(server, "enabled")) and !j.truth(j.get(server, "requires_reenable"));
+        }
+        fn matchesConfig(server: V, pin: V) bool {
+            const text = j.text(pin) orelse return false;
+            return text.len > 0 and serviceEnabled(server) and j.is(j.get(server, "config_pin"), text);
+        }
+        fn currentHealth(self: *const Self, id: []const u8, server: V) V {
+            const entry = j.get(self.health, id);
+            return if (matchesConfig(server, j.get(entry, "config_pin"))) entry else .null;
+        }
+        fn settingsHealth(self: *const Self, a: A) !V {
             var health = j.object(a);
-            if (self.health == .object) {
-                var it = self.health.object.iterator();
-                while (it.next()) |entry| if (configured(servers, entry.key_ptr.*)) {
-                    if (health.object.count() >= 32) return error.HealthEntryLimit;
-                    try j.set(&health, try a.dupe(u8, entry.key_ptr.*), try j.clone(a, entry.value_ptr.*));
-                };
+            if (self.servers != .array) return health;
+            for (self.servers.array.items) |server| {
+                const id = j.text(j.get(server, "id")) orelse continue;
+                const entry = self.currentHealth(id, server);
+                if (entry == .null) continue;
+                var row = j.object(a);
+                for ([_][]const u8{ "status", "tool_count", "checked_at_ms" }) |key| {
+                    if (entry.object.get(key)) |value| try j.set(&row, key, value);
+                }
+                try j.set(&health, id, row);
+            }
+            return health;
+        }
+        fn filteredHealth(self: *const Self, a: A, servers: V) !V {
+            var health = j.object(a);
+            if (servers != .array) return health;
+            for (servers.array.items) |server| {
+                const id = j.text(j.get(server, "id")) orelse continue;
+                const entry = self.currentHealth(id, server);
+                if (entry != .null) try j.set(&health, try a.dupe(u8, id), try j.clone(a, entry));
             }
             return health;
         }
         fn safeServers(self: *Self, value: V) !void {
-            if (value != .array or value.array.items.len > 32) return error.InvalidConfiguredInventory;
+            if (value != .array or value.array.items.len > max_configured_servers) return error.InvalidConfiguredInventory;
             // Clone only canonical public fields; no headers or credential data survive.
             const next_arena = try newArena(self.allocator);
             errdefer self.freeArena(next_arena);
@@ -317,18 +344,19 @@ pub fn Runtime(comptime Host: type) type {
             defer self.dropSlot(slot);
             const status: []const u8 = if (message != null) "failed" else "completed";
             if (slot.ui_test) {
-                const id = j.text(j.get(slot.operation.resource, "id")) orelse j.text(j.get(slot.operation.request, "server")) orelse "";
-                if (!configured(self.servers, id)) return self.result(a, null);
+                const id = j.text(j.get(slot.operation.request, "server")) orelse return self.result(a, null);
+                const pin = j.get(slot.operation.request, "config_pin");
+                if (!matchesConfig(configured(self.servers, id), pin)) return self.result(a, null);
                 const next_health_arena = try newArena(self.allocator);
                 var health_transferred = false;
                 errdefer if (!health_transferred) self.freeArena(next_health_arena);
                 const ha = next_health_arena.allocator();
                 var health = try self.filteredHealth(ha, self.servers);
-                if (!health.object.contains(id) and health.object.count() >= 32) return error.HealthEntryLimit;
                 var row = j.object(ha);
+                try j.set(&row, "config_pin", try j.clone(ha, pin));
                 try j.set(&row, "status", j.string(if (message != null) "failed" else "online"));
                 try j.set(&row, "tool_count", .{ .integer = @intCast(slot.operation.tools.items.len) });
-                try j.set(&row, "checked_at_ms", try j.clone(ha, j.get(ctx, "host_time_ms")));
+                if (finiteNumber(j.get(ctx, "host_time_ms"))) |n| try j.set(&row, "checked_at_ms", n);
                 try j.set(&health, try ha.dupe(u8, id), row);
                 self.freeArena(self.health_arena);
                 self.health_arena = next_health_arena;
@@ -365,7 +393,7 @@ pub fn Runtime(comptime Host: type) type {
         }
         fn initializeRemote(self: *Self, a: A, slot: *Slot) !V {
             const oa = slot.arena.allocator();
-            const params = try j.parse(oa, "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"microcrab-mcp-bridge\",\"version\":\"0.4.0\"}}");
+            const params = try j.parse(oa, "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"microcrab-mcp-bridge\",\"version\":\"" ++ guest_version ++ "\"}}");
             return self.issue(a, slot, "initialize", params);
         }
         fn completeDiscovery(self: *Self, a: A, slot: *Slot, ctx: V) !V {
@@ -418,6 +446,19 @@ pub fn Runtime(comptime Host: type) type {
         fn advance(self: *Self, a: A, slot: *Slot, event: V, ctx: V) !V {
             const op = &slot.operation;
             const oa = slot.arena.allocator();
+            if (slot.ui_test) {
+                // Host results may arrive after a settings change. Neither a stale
+                // resource snapshot nor an in-flight HTTP reply may continue a probe.
+                const id = j.text(j.get(op.request, "server")) orelse "";
+                const pin = j.get(op.request, "config_pin");
+                if (!matchesConfig(configured(self.servers, id), pin) or
+                    (op.stage == .resources and j.truth(j.get(event, "ok")) and
+                    !matchesConfig(configured(j.get(event, "value"), id), pin)))
+                {
+                    self.dropSlot(slot);
+                    return self.result(a, null);
+                }
+            }
             if (!j.truth(j.get(event, "ok"))) {
                 op.diagnostic = try oa.dupe(u8, j.text(j.get(event, "error")) orelse "MCP transport failed or was cancelled; check CORS, mixed-content policy and server connectivity");
                 return error.TransportFailure;
@@ -425,7 +466,7 @@ pub fn Runtime(comptime Host: type) type {
             const value = j.get(event, "value");
             switch (op.stage) {
                 .resources => {
-                    if (value != .array or value.array.items.len > 32) return error.InvalidConfiguredInventory;
+                    if (value != .array or value.array.items.len > max_configured_servers) return error.InvalidConfiguredInventory;
                     if (j.is(j.get(op.request, "action"), "list") and j.get(op.request, "server") == .null) {
                         op.aggregate = true;
                         for (value.array.items) |resource| if (j.truth(j.get(resource, "enabled"))) try op.resources.append(try j.clone(oa, resource));
@@ -646,9 +687,14 @@ pub fn Runtime(comptime Host: type) type {
                     break;
                 };
             } else if (std.mem.eql(u8, name, "test-connection")) {
+                const id = j.text(j.get(payload, "id")) orelse return error.ExactServerMissingOrDisabled;
+                const server = configured(self.servers, id);
+                const pin = j.get(server, "config_pin");
+                if (!matchesConfig(server, pin)) return error.ExactServerMissingOrDisabled;
                 var request = j.object(a);
                 try j.set(&request, "action", j.string("describe"));
-                try j.set(&request, "server", j.get(payload, "id"));
+                try j.set(&request, "server", j.string(id));
+                try j.set(&request, "config_pin", pin);
                 var identity = j.object(a);
                 try j.set(&identity, "invocation_id", j.string(try std.fmt.allocPrint(a, "connection-{d}", .{try self.nextSequence()})));
                 return self.begin(a, request, identity, ctx, true);
@@ -662,9 +708,43 @@ pub fn Runtime(comptime Host: type) type {
             try j.set(&out, "status", j.string(self.status));
             try j.set(&out, "error", j.string(self.last_error));
             try j.set(&out, "busy", .{ .bool = self.configs.items.len > 0 });
-            try j.set(&out, "health", if (self.health == .object) try j.clone(a, self.health) else j.object(a));
+            try j.set(&out, "health", try self.settingsHealth(a));
             try j.set(&out, "configured_count", .{ .integer = @intCast(if (self.servers == .array) self.servers.array.items.len else 0) });
             return out;
+        }
+        fn serviceStatus(entry: V) []const u8 {
+            if (entry == .null) return "unchecked";
+            const status = j.get(entry, "status");
+            if (j.is(status, "pending") or j.is(status, "checking")) return "checking";
+            for ([_][]const u8{ "online", "connected", "completed", "success", "healthy", "ok" }) |good| {
+                if (j.is(status, good)) return "connected";
+            }
+            return "unavailable";
+        }
+        fn finiteNumber(value: V) ?V {
+            if (value == .integer) return value;
+            const n = j.number(value) orelse return null;
+            return if (std.math.isFinite(n)) .{ .float = n } else null;
+        }
+        fn sidebarServices(self: *const Self, a: A) !V {
+            var rows = j.array(a);
+            // safeServers already bounds inventory entries and encoded bytes.
+            if (self.servers != .array) return rows;
+            std.debug.assert(self.servers.array.items.len <= max_configured_servers);
+            for (self.servers.array.items) |server| {
+                if (!serviceEnabled(server)) continue;
+                const id = j.text(j.get(server, "id")) orelse continue;
+                if (id.len == 0) continue;
+                const entry = self.currentHealth(id, server);
+                var row = j.object(a);
+                try j.set(&row, "id", j.string(id));
+                try j.set(&row, "status", j.string(serviceStatus(entry)));
+                for ([_][]const u8{ "tool_count", "checked_at_ms" }) |key| {
+                    if (finiteNumber(j.get(entry, key))) |n| try j.set(&row, key, n);
+                }
+                try rows.array.append(row);
+            }
+            return rows;
         }
         fn sidebar(self: *Self, a: A) !V {
             var out = j.object(a);
@@ -706,6 +786,7 @@ pub fn Runtime(comptime Host: type) type {
             try j.set(&out, "locale", j.string(self.locale));
             try j.set(&out, "session_id", j.string(self.session));
             try j.set(&out, "has_session", .{ .bool = self.session.len > 0 });
+            try j.set(&out, "services", try self.sidebarServices(a));
             try j.set(&out, "records", rows);
             try j.set(&out, "metrics", metrics);
             try j.set(&out, "page", .{ .integer = @intCast(self.page) });
@@ -762,6 +843,7 @@ pub fn Runtime(comptime Host: type) type {
             } else {
                 try j.set(&out, "session_id", j.string(self.session));
                 try j.set(&out, "has_session", .{ .bool = self.session.len > 0 });
+                try j.set(&out, "services", j.array(a));
                 try j.set(&out, "records", j.array(a));
                 try j.set(&out, "metrics", j.object(a));
                 try j.set(&out, "total_records", .{ .integer = 0 });

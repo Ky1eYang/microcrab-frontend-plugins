@@ -87,6 +87,9 @@ fn toCatalog(engine: *Engine, a: A, ctx: V) !void {
 }
 fn fromInitialize(engine: *Engine, a: A, ctx: V) !void {
     try std.testing.expectEqualStrings("initialize", try MockHost.method(a));
+    const initialize = try j.parse(a, MockHost.last().payload);
+    const body = try j.parse(a, j.text(j.get(initialize, "body")) orelse return error.NoHttpBody);
+    try std.testing.expect(j.is(j.get(j.get(j.get(body, "params"), "clientInfo"), "version"), "0.4.1"));
     _ = try deliver(engine, a, ctx, try rpcResponse(a, try j.parse(a, "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"serverInfo\":{\"name\":\"test\"}}")));
     try std.testing.expectEqualStrings("notifications/initialized", try MockHost.method(a));
     const notification = try j.parse(a, MockHost.last().payload);
@@ -139,7 +142,83 @@ test "runtime terminal allocation failures never revisit freed slots" {
     try std.testing.expect(terminal_failures > 0);
 }
 
-test "runtime health follows live configuration and ignores removed service completion" {
+fn sidebarPatch(result: V) V {
+    return j.get(j.get(result, "vars_patch"), "sidebar");
+}
+fn expectServiceStatus(view: V, status: []const u8) !void {
+    const services = j.get(view, "services");
+    try std.testing.expectEqual(@as(usize, 1), services.array.items.len);
+    try std.testing.expect(j.is(j.get(services.array.items[0], "id"), "server"));
+    try std.testing.expect(j.is(j.get(services.array.items[0], "status"), status));
+}
+
+test "runtime sidebar strictly projects enabled services without requiring a session" {
+    MockHost.init();
+    defer MockHost.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var engine = try Engine.init(std.testing.allocator);
+    defer engine.deinit();
+    var ctx = try context(a, "health");
+    try j.set(&ctx, "session_id", .null);
+    _ = try engine.initialize(a, ctx);
+    const inventory = try j.parse(a,
+        \\[{"id":"server","enabled":true,"endpoint":"https://secret.test/path","origin":"https://secret.test",
+        \\  "config_pin":"revision","authorization":"secret-auth","headers":{"authorization":"secret-header"}},
+        \\ {"id":"disabled","enabled":false}, {"id":"reauthorize","enabled":true,"requires_reenable":true},
+        \\ {"id":"not-bool","enabled":"true"}, {"id":42,"enabled":true}]
+    );
+    const initial = sidebarPatch(try deliver(&engine, a, ctx, inventory));
+    try expectServiceStatus(initial, "unchecked");
+    try std.testing.expect(!j.truth(j.get(initial, "has_session")));
+    try std.testing.expectEqual(@as(usize, 2), j.get(initial, "services").array.items[0].object.count());
+    const ha = engine.health_arena.allocator();
+    var health = try j.parse(ha,
+        \\{"config_pin":"revision","tool_count":3,"checked_at_ms":1234,"private":"provider-message"}
+    );
+    const cases = [_]struct { raw: []const u8, status: []const u8 }{
+        .{ .raw = "pending", .status = "checking" },
+        .{ .raw = "checking", .status = "checking" },
+        .{ .raw = "online", .status = "connected" },
+        .{ .raw = "connected", .status = "connected" },
+        .{ .raw = "completed", .status = "connected" },
+        .{ .raw = "success", .status = "connected" },
+        .{ .raw = "healthy", .status = "connected" },
+        .{ .raw = "ok", .status = "connected" },
+        .{ .raw = "failed", .status = "unavailable" },
+        .{ .raw = "offline", .status = "unavailable" },
+        .{ .raw = "error", .status = "unavailable" },
+        .{ .raw = "unreachable", .status = "unavailable" },
+        .{ .raw = "unrecognized provider data", .status = "unavailable" },
+    };
+    for (cases) |case| {
+        try j.set(&health, "status", j.string(case.raw));
+        try j.set(&engine.health, "server", health);
+        const view = try engine.projection(a, "sidebar");
+        try expectServiceStatus(view, case.status);
+        const row = j.get(view, "services").array.items[0];
+        try std.testing.expectEqual(@as(usize, 4), row.object.count());
+        try std.testing.expectEqual(@as(?f64, 3), j.number(j.get(row, "tool_count")));
+        try std.testing.expectEqual(@as(?f64, 1234), j.number(j.get(row, "checked_at_ms")));
+        const encoded = try j.stringify(a, view);
+        for ([_][]const u8{ "secret", "revision", "provider", "endpoint", "origin", "headers", "authorization" }) |forbidden| {
+            try std.testing.expect(std.mem.indexOf(u8, encoded, forbidden) == null);
+        }
+    }
+    try j.set(&health, "tool_count", j.string("3"));
+    try j.set(&health, "checked_at_ms", .{ .number_string = "1e9999" });
+    try j.set(&engine.health, "server", health);
+    const view = try engine.projection(a, "sidebar");
+    try expectServiceStatus(view, "unavailable");
+    try std.testing.expectEqual(@as(usize, 2), j.get(view, "services").array.items[0].object.count());
+    for ([_][]const u8{ "test-connection", "refresh-config", "save-config", "server-toggle", "remove" }) |action_name| {
+        _ = try engine.action(a, action_name, try j.parse(a, "{\"id\":\"server\",\"authorization\":\"ignored\"}"), ctx);
+    }
+    try std.testing.expectEqual(@as(usize, 1), MockHost.requests.items.len);
+}
+
+test "runtime health is pin scoped and ignores late probes for changed and removed services" {
     MockHost.init();
     defer MockHost.deinit();
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -149,30 +228,56 @@ test "runtime health follows live configuration and ignores removed service comp
     defer engine.deinit();
     var ctx = try context(a, "health");
     try j.set(&ctx, "surface", try j.parse(a, "{\"target\":\"setting-page\"}"));
+    const payload = try j.parse(a, "{\"id\":\"server\"}");
+    const original = try resources(a);
     _ = try engine.initialize(a, ctx);
-    var inventory = j.array(a);
-    const ha = engine.health_arena.allocator();
-    engine.health = j.object(ha);
-    var i: usize = 0;
-    while (i < 40) : (i += 1) {
-        const id = try std.fmt.allocPrint(a, "server{d}", .{i});
-        var row = try resources(a);
-        try j.set(&row.array.items[0], "id", j.string(id));
-        if (i < 32) try inventory.array.append(row.array.items[0]);
-        try j.set(&engine.health, try ha.dupe(u8, id), try j.parse(ha, "{\"status\":\"online\",\"tool_count\":1}"));
-    }
-    _ = try deliver(&engine, a, ctx, inventory);
-    try std.testing.expectEqual(@as(usize, 32), engine.health.object.count());
-    try std.testing.expect(j.get(engine.health, "server39") == .null);
-    _ = try engine.action(a, "test-connection", try j.parse(a, "{\"id\":\"server0\"}"), ctx);
-    const test_id = MockHost.last().id;
+    try expectServiceStatus(sidebarPatch(try deliver(&engine, a, ctx, original)), "unchecked");
+
+    try expectServiceStatus(sidebarPatch(try engine.action(a, "test-connection", payload, ctx)), "unchecked");
+    try toCatalog(&engine, a, ctx);
+    const checked = try deliver(&engine, a, ctx, try rpcResponse(a, try catalog(a)));
+    try expectServiceStatus(sidebarPatch(checked), "connected");
+    const exported = j.get(j.get(j.get(j.get(checked, "vars_patch"), "settings"), "health"), "server");
+    try std.testing.expect(j.is(j.get(exported, "status"), "online"));
+    try std.testing.expect(!exported.object.contains("config_pin"));
     _ = try engine.action(a, "refresh-config", .null, ctx);
-    _ = try deliver(&engine, a, ctx, j.array(a));
+    try expectServiceStatus(sidebarPatch(try deliver(&engine, a, ctx, original)), "connected");
+
+    _ = try engine.action(a, "test-connection", payload, ctx);
+    try toCatalog(&engine, a, ctx);
+    const old_http = try event(a, MockHost.last().id, try rpcResponse(a, try catalog(a)));
+    _ = try engine.action(a, "test-connection", payload, ctx);
+    const old_list_id = MockHost.last().id;
+    const updated = try resources(a);
+    try j.set(&updated.array.items[0], "config_pin", j.string("new-revision"));
+    _ = try engine.action(a, "refresh-config", .null, ctx);
+    try expectServiceStatus(sidebarPatch(try deliver(&engine, a, ctx, updated)), "unchecked");
     try std.testing.expectEqual(@as(usize, 0), engine.health.object.count());
-    _ = try engine.phase(a, "event-result", try event(a, test_id, inventory), ctx);
+    const before = MockHost.requests.items.len;
+    try expectServiceStatus(sidebarPatch(try engine.phase(a, "event-result", old_http, ctx)), "unchecked");
+    try expectServiceStatus(sidebarPatch(try engine.phase(a, "event-result", try event(a, old_list_id, original), ctx)), "unchecked");
+    try std.testing.expectEqual(before, MockHost.requests.items.len);
+
+    // A resource-list result can also disagree with the action pin before a
+    // configuration response reaches the guest. Do not start HTTP in that case.
+    _ = try engine.action(a, "test-connection", payload, ctx);
+    const before_list = MockHost.requests.items.len;
+    try expectServiceStatus(sidebarPatch(try deliver(&engine, a, ctx, original)), "unchecked");
+    try std.testing.expectEqual(before_list, MockHost.requests.items.len);
+
+    _ = try engine.action(a, "test-connection", payload, ctx);
+    _ = try deliver(&engine, a, ctx, updated);
     try fromInitialize(&engine, a, ctx);
-    _ = try deliver(&engine, a, ctx, try rpcResponse(a, try catalog(a)));
-    try std.testing.expectEqual(@as(usize, 0), engine.health.object.count());
+    try expectServiceStatus(sidebarPatch(try deliver(&engine, a, ctx, try rpcResponse(a, try catalog(a)))), "connected");
+    try j.set(&ctx, "session_id", j.string("different-scope"));
+    try expectServiceStatus(sidebarPatch(try engine.phase(a, "observe", .null, ctx)), "unchecked");
+
+    _ = try engine.action(a, "test-connection", payload, ctx);
+    const removed_list_id = MockHost.last().id;
+    _ = try engine.action(a, "remove", payload, ctx);
+    _ = try deliver(&engine, a, ctx, j.array(a));
+    const removed = try engine.phase(a, "event-result", try event(a, removed_list_id, updated), ctx);
+    try std.testing.expectEqual(@as(usize, 0), j.get(sidebarPatch(removed), "services").array.items.len);
     try std.testing.expectEqual(@as(usize, 0), pendingCount(&engine));
     try std.testing.expectEqual(@as(usize, 0), engine.budget.used);
 }
@@ -184,17 +289,41 @@ test "runtime projection budgets preserve concrete diagnostics and model complet
     const a = arena.allocator();
     var engine = try Engine.init(std.testing.allocator);
     defer engine.deinit();
+    const ctx = try context(a, "projection-budget");
+    _ = try engine.initialize(a, ctx);
+    const inventory = try resources(a);
+    const id = try a.alloc(u8, 40 * 1024);
+    @memset(id, 'i');
+    try j.set(&inventory.array.items[0], "id", j.string(id));
+    _ = try deliver(&engine, a, ctx, inventory);
+    var request = try j.parse(a, "{\"action\":\"list\"}");
+    const tool = try a.alloc(u8, 30 * 1024);
+    @memset(tool, 't');
+    try j.set(&request, "tool", j.string(tool));
+    _ = try engine.start(a, request, ctx);
     const ha = engine.health_arena.allocator();
-    engine.health = j.object(ha);
+    var health = try j.parse(ha, "{\"config_pin\":\"revision\"}");
     const oversized = try ha.alloc(u8, 70 * 1024);
     @memset(oversized, 'x');
-    try j.set(&engine.health, "oversized", j.string(oversized));
+    try j.set(&health, "status", j.string(oversized));
+    try j.set(&engine.health, try ha.dupe(u8, id), health);
     const completion = try j.parse(a, "{\"identity\":{\"invocation_id\":\"completed\"},\"status\":\"completed\",\"output\":{\"content\":[]}}");
     const result = try engine.result(a, completion);
     try std.testing.expect(try j.equal(a, completion, j.get(result, "tool_completion")));
     const settings = j.get(j.get(result, "vars_patch"), "settings");
     try std.testing.expect(j.is(j.get(settings, "error"), "ProjectionByteBudget"));
     try Engine.validateProjection(a, settings);
+    const sidebar = sidebarPatch(result);
+    try std.testing.expect(j.is(j.get(sidebar, "error"), "ProjectionByteBudget"));
+    try std.testing.expectEqual(@as(usize, 0), j.get(sidebar, "services").array.items.len);
+    try std.testing.expectEqual(@as(usize, 0), j.get(sidebar, "records").array.items.len);
+    try std.testing.expectEqual(@as(usize, 1), engine.records.items.len);
+    try Engine.validateProjection(a, sidebar);
+    _ = try deliver(&engine, a, ctx, j.array(a));
+    _ = try engine.initialize(a, ctx);
+    const restored = sidebarPatch(try deliver(&engine, a, ctx, j.array(a)));
+    try std.testing.expect(j.is(j.get(restored, "error"), ""));
+    try std.testing.expectEqual(@as(usize, 1), j.get(restored, "records").array.items.len);
     var deep: V = .null;
     var i: usize = 0;
     while (i < 25) : (i += 1) {
@@ -368,6 +497,9 @@ test "runtime pending admission history clearing and reset release exact owned m
     const a = arena.allocator();
     var engine = try Engine.init(std.testing.allocator);
     defer engine.deinit();
+    const initial = try context(a, "history-inventory");
+    _ = try engine.initialize(a, initial);
+    _ = try deliver(&engine, a, initial, try resources(a));
     const request = try j.parse(a, "{\"action\":\"list\"}");
     var i: usize = 0;
     while (i < 32) : (i += 1) {
@@ -400,6 +532,16 @@ test "runtime pending admission history clearing and reset release exact owned m
     try std.testing.expectEqual(@as(usize, 1), pendingCount(&engine));
     try std.testing.expectEqual(kept_id, engine.records.items[0].id);
     try std.testing.expectEqualStrings("pending", engine.records.items[0].status);
+    try expectServiceStatus(sidebarPatch(try engine.phase(a, "observe", .null, kept_ctx)), "unchecked");
+    const paged = sidebarPatch(try engine.action(a, "history-page", try j.parse(a, "{\"page\":1}"), kept_ctx));
+    try expectServiceStatus(paged, "unchecked");
+    try std.testing.expectEqual(@as(?u64, 1), j.uint(j.get(paged, "page")));
+    try std.testing.expectEqual(@as(?u64, 10), j.uint(j.get(paged, "page_size")));
+    try std.testing.expectEqual(@as(?u64, 128), j.uint(j.get(paged, "total_records")));
+    try std.testing.expectEqual(@as(?u64, 128), j.uint(j.get(j.get(paged, "metrics"), "total")));
+    try std.testing.expectEqual(@as(usize, 10), j.get(paged, "records").array.items.len);
+    try std.testing.expect(j.get(paged, "detail") == .null);
+    try std.testing.expect(j.get(paged, "selected_id") == .null);
     var changed = try context(a, "changed");
     try j.set(&changed, "history_generation", .{ .integer = 2 });
     try engine.updateContext(a, changed);

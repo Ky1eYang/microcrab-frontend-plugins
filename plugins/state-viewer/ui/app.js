@@ -78,6 +78,70 @@
     return state.descriptors?.[key]?.kind === "custom" && state.descriptors[key].deletable === true && state.metadata?.[key]?.owner === "client";
   }
 
+  // Keep in parity with the native State inspector. The authoritative snapshot
+  // and edit/CAS input below remain exact; only these certified paths vary.
+  function projectStateValue(key, value) {
+    const kind = state.descriptors?.[key]?.kind;
+    const slots = [];
+    const add = (row, field, composite = false) => {
+      if (!row || typeof row !== "object" || !Object.hasOwn(row, field) || typeof row[field] !== "string") return;
+      const match = (composite ? /^(agent-init:[1-9]\d{0,19}:[1-9]\d{0,19}:)([0-9a-f]{64})(?![\s\S])/i : /^()([0-9a-f]{64})(?![\s\S])/i).exec(row[field]);
+      if (match) slots.push({ row, field, exact: row[field], prefix: match[1], hex: match[2].toLowerCase() });
+    };
+    if (key === "references" && kind === "reference" && Array.isArray(value)) {
+      for (const row of value) add(row, "content_digest");
+    } else if (key === "agent_init" && kind === "framework") {
+      add(value, "component");
+      if (Array.isArray(value?.cache_points)) for (const row of value.cache_points) {
+        add(row, "version");
+        add(row, "call_id", true);
+      }
+    } else if (key === "executions" && kind === "framework" && Array.isArray(value)) {
+      for (const row of value) if (row?.subject?.kind === "agent_init") {
+        add(row.subject, "component");
+        add(row, "call_id", true);
+      }
+    }
+    if (!slots.length) return value;
+    const peers = new Map();
+    for (const slot of slots) peers.set(slot.exact, slot);
+    const ordered = [...peers.keys()].sort();
+    const counts = new Map();
+    for (const {prefix, hex} of peers.values()) for (const length of [16, 20, 24]) {
+      const stem = prefix + hex.slice(0, length);
+      counts.set(stem, (counts.get(stem) || 0) + 1);
+    }
+    const ranks = new Map();
+    const labels = new Map();
+    for (const exact of ordered) {
+      const {prefix, hex} = peers.get(exact);
+      const stems = [16, 20, 24].map(length => prefix + hex.slice(0, length));
+      const stem = stems.find(candidate => counts.get(candidate) === 1) || stems[2];
+      let suffix = "";
+      if (counts.get(stem) > 1) {
+        const ordinal = (ranks.get(stem) || 0) + 1;
+        ranks.set(stem, ordinal);
+        suffix = `~${ordinal.toString(36)}`;
+      }
+      labels.set(exact, `${stem}…${suffix}`);
+    }
+    const patches = new Map();
+    for (const {row, field, exact} of slots) {
+      const patch = patches.get(row) || {};
+      patch[field] = labels.get(exact);
+      patches.set(row, patch);
+    }
+    const project = row => patches.has(row) ? { ...row, ...patches.get(row) } : row;
+    if (key === "references") return value.map(project);
+    if (key === "agent_init") return Array.isArray(value.cache_points)
+      ? { ...project(value), cache_points: value.cache_points.map(project) }
+      : project(value);
+    return value.map(row => row?.subject?.kind === "agent_init"
+      ? { ...project(row), subject: project(row.subject) }
+      : row);
+  }
+
+  const exactKeys = new Set();
   function render() {
     const status = document.getElementById("operation-status");
     const observe = document.getElementById("observe-operation");
@@ -134,6 +198,11 @@
       return;
     }
 
+    const displayValues = new Map();
+    for (const key of allKeys) {
+      if (isSecret(key) || (state.metadata?.[key]?.visibility === "invisible" && !state.show_invisible)) continue;
+      displayValues.set(key, projectStateValue(key, state.values[key]));
+    }
     // 4. Filter by search query
     const matchedKeys = allKeys.filter(k => {
       const meta = state.metadata ? state.metadata[k] : null;
@@ -142,8 +211,9 @@
 
       if (!query) return true;
       if (isSecret(k)) return k.toLowerCase().includes(query);
-      const valStr = JSON.stringify(state.values[k] || "").toLowerCase();
-      return k.toLowerCase().includes(query) || valStr.includes(query);
+      const display = JSON.stringify(displayValues.get(k) ?? "").toLowerCase();
+      const exact = displayValues.get(k) === state.values[k] ? display : JSON.stringify(state.values[k]).toLowerCase();
+      return k.toLowerCase().includes(query) || display.includes(query) || exact.includes(query);
     });
 
     // 5. If search query yielded no matches (Differentiate from empty session!)
@@ -172,7 +242,11 @@
       const editable = canEdit(key);
       const deletable = canDelete(key);
 
-      const valFormatted = secret ? i18n.secretValue() : typeof val === "object" ? JSON.stringify(val, null, 2) : String(val);
+      const displayVal = displayValues.get(key);
+      const hasExact = !secret && displayVal !== val;
+      const showExact = hasExact && exactKeys.has(key);
+      const shown = showExact ? val : displayVal;
+      const valFormatted = secret ? i18n.secretValue() : typeof shown === "object" ? JSON.stringify(shown, null, 2) : String(shown);
       const type = secret ? i18n.secret() : Array.isArray(val) ? "array" : typeof val;
 
       const isInvisible = Boolean(meta.visibility === "invisible");
@@ -195,6 +269,7 @@
             </div>
           </div>
           <div class="val-preview">${escapeHtml(valFormatted)}</div>
+          ${hasExact ? `<button type="button" class="btn btn-sm exact-state" data-key="${escapeHtml(key)}" aria-pressed="${showExact}">${showExact ? (isZh() ? "显示简洁视图" : "Show compact view") : (isZh() ? "显示精确证据" : "Show exact evidence")}</button>` : ""}
           <div class="card-footer">
             <div style="font-size:11px;color:var(--text-sub);">
               ${!deletable ? (isZh() ? "受保护 (非 Client 所有)" : "Protected") : "Client-owned"}
@@ -224,6 +299,16 @@
 
     el.list.innerHTML = html;
 
+    el.list.querySelectorAll(".exact-state").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.key;
+        if (isSecret(key)) return;
+        if (exactKeys.has(key)) exactKeys.delete(key);
+        else exactKeys.add(key);
+        render();
+        Array.from(el.list.querySelectorAll(".exact-state")).find(next => next.dataset.key === key)?.focus();
+      });
+    });
     // Attach buttons with disabled guards
     el.list.querySelectorAll(".op-edit").forEach(btn => {
       btn.addEventListener("click", () => {
@@ -380,6 +465,7 @@
     window.microcrab.onViewState((next) => {
       if (next && typeof next === "object") {
         const previousSession = state.session_id;
+        if (next.values !== undefined || previousSession !== next.session_id) exactKeys.clear();
         state = { ...state, ...next };
         if (activeEditKey !== null && isSecret(activeEditKey)) {
           el.modalVal.value = "";

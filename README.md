@@ -54,6 +54,11 @@ asset directories untouched.
 External Speaker Test remains opt-in and disabled by default. Build explicitly
 with `zig build component -Dplugins=external-speaker-test`, or run `zig build
 component` from its package directory. Neither command takes a deployment address.
+This fixture is for testing only, not for production. The destination Session
+must belong to a Project with External Messaging explicitly enabled. Disabling
+External Messaging for that Project suspends inbox ingress and reply observation;
+it does not revoke test credentials.
+
 Reply inspection requires a Frontend with generic GET and SSE support on
 explicitly approved resource grants and a Server with dialogue replies. Older
 POST-only Frontends cannot inspect replies. Keep a test Session open. Authorize
